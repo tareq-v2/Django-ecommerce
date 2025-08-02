@@ -1,0 +1,24 @@
+{% extends "admin/change_list.html" %}
+
+{% block content_title %}
+<h1> Sales Summary </h1>
+{% endblock %}
+
+{% block result_list %}
+<div class="results">
+    <div class="totals">
+        <h2>Sales Overview</h2>
+        <p><strong>Total Orders:</strong> {{ total_orders }}</p>
+        <p><strong>Total Revenue:</strong> ${{ total_sales|floatformat:2 }}</p>
+        
+        <h3>Top Selling Products</h3>
+        <ol>
+            {% for product in top_products %}
+            <li>{{ product.name }} - Sold: {{ product.total_sold|default:0 }}</li>
+            {% endfor %}
+        </ol>
+    </div>
+</div>
+
+{{ block.super }}
+{% endblock %}

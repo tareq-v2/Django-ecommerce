@@ -1,0 +1,44 @@
+# Django
+*.log
+*.pot
+*.pyc
+__pycache__/
+db.sqlite3
+media/
+myecommerce/settings.py
+
+# Environments
+.env
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Static files (during development)
+staticfiles/
+
+# Node modules (if using frontend tools)
+node_modules/
+
+# Coverage reports
+.coverage
+htmlcov/
+
+# Database backups
+*.bak
+
+# Stripe secret key configs
+*secret*
+*private*
+
+# Python packaging
+build/
+dist/
+*.egg-info/
