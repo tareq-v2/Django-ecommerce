@@ -1,0 +1,4323 @@
+
+Build Django E-commerce with MySQL and Stripe
+How can I create a simple e-commerce using Python Django with a database that is MySQL database? The payment method should be Stripe. I've prior laravel and React. I also know how basic Python operations work! I want to know web development using Python, that's why I need to build something using Python. First, think and analyze my requirement and create the whole project structure. I've set up XAMPP server, Node.js, and Python on my Windows operating system machine.
+To build a simple Django e-commerce site with MySQL and Stripe, follow this structured approach. Leveraging your Laravel/React background, we'll focus on Django-specific patterns.
+
+Project Structure
+bash
+myecommerce/
+├── myecommerce/               # Project config
+│   ├── __init__.py
+│   ├── settings.py            # DB/Stripe config
+│   ├── urls.py                # Main URLs
+│   └── ...
+├── products/                  # Products app
+│   ├── migrations/
+│   ├── templates/products/
+│   │   ├── list.html          # Product listings
+│   │   └── detail.html        # Product details
+│   ├── __init__.py
+│   ├── admin.py
+│   ├── apps.py
+│   ├── models.py              # Product model
+│   ├── views.py
+│   └── ...
+├── cart/                      # Cart functionality
+│   ├── templatetags/          # Custom template tags
+│   │   └── cart_tags.py
+│   ├── __init__.py
+│   └── utils.py               # Cart session handling
+├── checkout/                  # Payments app
+│   ├── templates/checkout/
+│   │   └── checkout.html      # Stripe integration
+│   ├── __init__.py
+│   ├── views.py
+│   └── ...
+├── templates/
+│   └── base.html              # Base template
+├── static/                    # CSS/JS/Images
+├── manage.py
+└── requirements.txt
+Step-by-Step Implementation
+1. Setup & Dependencies
+bash
+python -m venv venv
+venv\Scripts\activate  # Windows
+pip install django mysqlclient stripe django-crispy-forms
+django-admin startproject myecommerce .
+django-admin startapp products
+django-admin startapp checkout
+mkdir cart && touch cart/__init__.py cart/utils.py
+2. Configure MySQL in settings.py
+python
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': 'ecommerce_db',       # Create via XAMPP/PHPMyAdmin
+        'USER': 'root',
+        'PASSWORD': '',               # XAMPP default password
+        'HOST': 'localhost',
+        'PORT': '3306',
+    }
+}
+3. Product Model (products/models.py)
+python
+from django.db import models
+
+class Product(models.Model):
+    name = models.CharField(max_length=100)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    description = models.TextField()
+    image = models.ImageField(upload_to='products/')
+
+    def __str__(self):
+        return self.name
+Run python manage.py makemigrations && python manage.py migrate
+
+4. Cart Session Logic (cart/utils.py)
+python
+class Cart:
+    def __init__(self, request):
+        self.session = request.session
+        cart = self.session.get('cart', {})
+        self.cart = cart
+    
+    def add(self, product_id, quantity=1):
+        product_id = str(product_id)
+        self.cart[product_id] = self.cart.get(product_id, 0) + quantity
+        self.save()
+    
+    def remove(self, product_id):
+        product_id = str(product_id)
+        if product_id in self.cart:
+            del self.cart[product_id]
+            self.save()
+    
+    def save(self):
+        self.session['cart'] = self.cart
+        self.session.modified = True
+5. Views & Templates
+Product List View (products/views.py):
+
+python
+from django.shortcuts import render
+from .models import Product
+
+def product_list(request):
+    products = Product.objects.all()
+    return render(request, 'products/list.html', {'products': products})
+Cart Context Processor (Create cart/context_processors.py):
+
+python
+from .utils import Cart
+
+def cart(request):
+    return {'cart': Cart(request)}
+Add to settings.py:
+
+python
+TEMPLATES = [
+    {
+        # ...
+        'OPTIONS': {
+            'context_processors': [
+                # ...
+                'cart.context_processors.cart',
+            ],
+        },
+    },
+]
+6. Stripe Integration (checkout/views.py)
+python
+import stripe
+from django.conf import settings
+from django.views.generic import TemplateView
+from django.views.decorators.csrf import csrf_exempt
+from django.http import JsonResponse
+
+stripe.api_key = settings.STRIPE_SECRET_KEY
+
+class CheckoutView(TemplateView):
+    template_name = 'checkout/checkout.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['stripe_key'] = settings.STRIPE_PUBLIC_KEY
+        return context
+
+@csrf_exempt
+def create_payment(request):
+    try:
+        # Create Stripe Checkout Session
+        checkout_session = stripe.checkout.Session.create(
+            payment_method_types=['card'],
+            line_items=[
+                {
+                    'price_data': {
+                        'currency': 'usd',
+                        'product_data': {'name': 'Order Total'},
+                        'unit_amount': int(request.POST['total'] * 100),
+                    },
+                    'quantity': 1,
+                },
+            ],
+            mode='payment',
+            success_url='http://localhost:8000/success/',
+            cancel_url='http://localhost:8000/cancel/',
+        )
+        return JsonResponse({'id': checkout_session.id})
+    except Exception as e:
+        return JsonResponse({'error': str(e)})
+7. URLs Configuration (myecommerce/urls.py)
+python
+from django.urls import path
+from products.views import product_list
+from checkout.views import CheckoutView, create_payment
+
+urlpatterns = [
+    path('', product_list, name='product-list'),
+    path('checkout/', CheckoutView.as_view(), name='checkout'),
+    path('create-payment/', create_payment, name='create-payment'),
+]
+8. Frontend Integration
+Base Template (templates/base.html): Include Bootstrap and cart icon
+
+Checkout Template (checkout/checkout.html):
+
+html
+<form id="payment-form">
+  <div id="card-element"><!-- Stripe injects here --></div>
+  <button id="submit-button" class="btn btn-primary">Pay ${{ cart.get_total }}</button>
+</form>
+<script src="https://js.stripe.com/v3/"></script>
+<script>
+  const stripe = Stripe('{{ stripe_key }}');
+  const elements = stripe.elements();
+  const cardElement = elements.create('card');
+  cardElement.mount('#card-element');
+  
+  document.getElementById('payment-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const {error, paymentMethod} = await stripe.createPaymentMethod({
+      type: 'card',
+      card: cardElement,
+    });
+    if (error) {
+      console.error(error);
+    } else {
+      fetch('/create-payment/', {
+        method: 'POST',
+        headers: {'X-CSRFToken': '{{ csrf_token }}', 'Content-Type': 'application/json'},
+        body: JSON.stringify({total: {{ cart.get_total }}})
+      }).then(response => response.json())
+      .then(data => {
+        stripe.redirectToCheckout({sessionId: data.id});
+      });
+    }
+  });
+</script>
+Key Considerations
+Stripe Setup:
+
+Get API keys from Stripe Dashboard
+
+Add to settings.py:
+
+python
+STRIPE_PUBLIC_KEY = 'pk_test_...'
+STRIPE_SECRET_KEY = 'sk_test_...'
+Static Files:
+
+Configure STATIC_URL and STATICFILES_DIRS in settings.py
+
+Run python manage.py collectstatic in production
+
+Security:
+
+Use django-environ for secrets
+
+Add CSRF protection
+
+Validate Stripe webhook signatures
+
+Run the Project
+Start XAMPP and activate MySQL
+
+Create database ecommerce_db via PHPMyAdmin
+
+Migrate and run:
+
+bash
+python manage.py makemigrations
+python manage.py migrate
+python manage.py runserver
+This structure provides a foundation. Extend with user auth, order history, and webhooks as needed. Refer to:
+
+Django Docs
+
+Stripe Django Integration
+
+This response is AI-generated, for reference only.
+myecommerce/
+├── myecommerce/               # Project config
+│   ├── __init__.py
+│   ├── settings.py            # DB/Stripe config
+│   ├── urls.py                # Main URLs
+│   └── ...
+├── products/                  # Products app
+│   ├── migrations/
+│   ├── templates/products/
+│   │   ├── list.html          # Product listings
+│   │   └── detail.html        # Product details
+│   ├── __init__.py
+│   ├── admin.py
+│   ├── apps.py
+│   ├── models.py              # Product model
+│   ├── views.py
+│   └── ...
+├── cart/                      # Cart functionality
+│   ├── templatetags/          # Custom template tags
+│   │   └── cart_tags.py
+│   ├── __init__.py
+│   └── utils.py               # Cart session handling
+├── checkout/                  # Payments app
+│   ├── templates/checkout/
+│   │   └── checkout.html      # Stripe integration
+│   ├── __init__.py
+│   ├── views.py
+│   └── ...
+├── templates/
+│   └── base.html              # Base template
+├── static/                    # CSS/JS/Images
+├── manage.py
+└── requirements.txt
+By following this folder structure, I want to set up the project first, then write code for every script from first to last, and how can I run this project?
+Let's implement the project step-by-step, following the structure you've outlined. I'll provide the code for each file and explain how to run the project.
+
+1. Project Setup
+bash
+# Create project directory
+mkdir myecommerce
+cd myecommerce
+
+# Create virtual environment (Windows)
+python -m venv venv
+venv\Scripts\activate
+
+# Install dependencies
+pip install django mysqlclient stripe django-crispy-forms pillow
+2. Project Structure Implementation
+Create the following files and directories:
+
+myecommerce/settings.py
+python
+import os
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+SECRET_KEY = 'django-insecure-@#your_secret_key_here#@'
+DEBUG = True
+ALLOWED_HOSTS = []
+
+INSTALLED_APPS = [
+    'django.contrib.admin',
+    'django.contrib.auth',
+    'django.contrib.contenttypes',
+    'django.contrib.sessions',
+    'django.contrib.messages',
+    'django.contrib.staticfiles',
+    'products',
+    'cart',
+    'checkout',
+    'crispy_forms',
+]
+
+MIDDLEWARE = [
+    'django.middleware.security.SecurityMiddleware',
+    'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.common.CommonMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django.contrib.messages.middleware.MessageMiddleware',
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+]
+
+ROOT_URLCONF = 'myecommerce.urls'
+
+TEMPLATES = [
+    {
+        'BACKEND': 'django.template.backends.django.DjangoTemplates',
+        'DIRS': [os.path.join(BASE_DIR, 'templates')],
+        'APP_DIRS': True,
+        'OPTIONS': {
+            'context_processors': [
+                'django.template.context_processors.debug',
+                'django.template.context_processors.request',
+                'django.contrib.auth.context_processors.auth',
+                'django.contrib.messages.context_processors.messages',
+                'cart.context_processors.cart',
+            ],
+        },
+    },
+]
+
+WSGI_APPLICATION = 'myecommerce.wsgi.application'
+
+# MySQL Configuration
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': 'ecommerce_db',
+        'USER': 'root',
+        'PASSWORD': '',
+        'HOST': 'localhost',
+        'PORT': '3306',
+    }
+}
+
+AUTH_PASSWORD_VALIDATORS = [
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
+]
+
+LANGUAGE_CODE = 'en-us'
+TIME_ZONE = 'UTC'
+USE_I18N = True
+USE_TZ = True
+
+# Static files
+STATIC_URL = '/static/'
+STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+# Stripe Configuration
+STRIPE_PUBLIC_KEY = 'pk_test_51YourPublicKey'
+STRIPE_SECRET_KEY = 'sk_test_51YourSecretKey'
+
+# Crispy Forms
+CRISPY_TEMPLATE_PACK = 'bootstrap4'
+
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+myecommerce/urls.py
+python
+from django.contrib import admin
+from django.urls import path, include
+from django.conf import settings
+from django.conf.urls.static import static
+
+urlpatterns = [
+    path('admin/', admin.site.urls),
+    path('', include('products.urls')),
+    path('cart/', include('cart.urls')),
+    path('checkout/', include('checkout.urls')),
+] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+products/models.py
+python
+from django.db import models
+
+class Product(models.Model):
+    name = models.CharField(max_length=100)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    description = models.TextField()
+    image = models.ImageField(upload_to='products/')
+    stock = models.PositiveIntegerField(default=10)
+
+    def __str__(self):
+        return self.name
+products/views.py
+python
+from django.shortcuts import render, get_object_or_404
+from .models import Product
+
+def product_list(request):
+    products = Product.objects.all()
+    return render(request, 'products/list.html', {'products': products})
+
+def product_detail(request, product_id):
+    product = get_object_or_404(Product, id=product_id)
+    return render(request, 'products/detail.html', {'product': product})
+products/urls.py
+python
+from django.urls import path
+from . import views
+
+app_name = 'products'
+
+urlpatterns = [
+    path('', views.product_list, name='product_list'),
+    path('<int:product_id>/', views.product_detail, name='product_detail'),
+]
+products/templates/products/list.html
+html
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mt-5">
+    <h2>Products</h2>
+    <div class="row">
+        {% for product in products %}
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <img src="{{ product.image.url }}" class="card-img-top" alt="{{ product.name }}">
+                <div class="card-body">
+                    <h5 class="card-title">{{ product.name }}</h5>
+                    <p class="card-text">${{ product.price }}</p>
+                    <a href="{% url 'products:product_detail' product.id %}" class="btn btn-primary">View Details</a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+products/templates/products/detail.html
+html
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row">
+        <div class="col-md-6">
+            <img src="{{ product.image.url }}" class="img-fluid" alt="{{ product.name }}">
+        </div>
+        <div class="col-md-6">
+            <h2>{{ product.name }}</h2>
+            <p class="text-muted">${{ product.price }}</p>
+            <p>{{ product.description }}</p>
+            <form action="{% url 'cart:add_to_cart' product.id %}" method="post">
+                {% csrf_token %}
+                <div class="form-group">
+                    <label for="quantity">Quantity:</label>
+                    <input type="number" name="quantity" id="quantity" min="1" max="{{ product.stock }}" value="1" class="form-control w-25">
+                </div>
+                <button type="submit" class="btn btn-primary">Add to Cart</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+cart/utils.py
+python
+from decimal import Decimal
+from django.conf import settings
+from products.models import Product
+
+class Cart:
+    def __init__(self, request):
+        self.session = request.session
+        cart = self.session.get(settings.CART_SESSION_ID)
+        if not cart:
+            cart = self.session[settings.CART_SESSION_ID] = {}
+        self.cart = cart
+
+    def add(self, product, quantity=1):
+        product_id = str(product.id)
+        if product_id not in self.cart:
+            self.cart[product_id] = {'quantity': 0, 'price': str(product.price)}
+        self.cart[product_id]['quantity'] += quantity
+        self.save()
+
+    def save(self):
+        self.session.modified = True
+
+    def remove(self, product):
+        product_id = str(product.id)
+        if product_id in self.cart:
+            del self.cart[product_id]
+            self.save()
+
+    def __iter__(self):
+        product_ids = self.cart.keys()
+        products = Product.objects.filter(id__in=product_ids)
+        cart = self.cart.copy()
+        for product in products:
+            cart[str(product.id)]['product'] = product
+        for item in cart.values():
+            item['price'] = Decimal(item['price'])
+            item['total_price'] = item['price'] * item['quantity']
+            yield item
+
+    def __len__(self):
+        return sum(item['quantity'] for item in self.cart.values())
+
+    def get_total_price(self):
+        return sum(Decimal(item['price']) * item['quantity'] for item in self.cart.values())
+
+    def clear(self):
+        del self.session[settings.CART_SESSION_ID]
+        self.save()
+cart/context_processors.py
+python
+from .utils import Cart
+
+def cart(request):
+    return {'cart': Cart(request)}
+cart/urls.py
+python
+from django.urls import path
+from . import views
+
+app_name = 'cart'
+
+urlpatterns = [
+    path('add/<int:product_id>/', views.add_to_cart, name='add_to_cart'),
+    path('remove/<int:product_id>/', views.remove_from_cart, name='remove_from_cart'),
+    path('view/', views.cart_detail, name='cart_detail'),
+]
+cart/views.py
+python
+from django.shortcuts import redirect, render, get_object_or_404
+from products.models import Product
+from .utils import Cart
+
+def add_to_cart(request, product_id):
+    cart = Cart(request)
+    product = get_object_or_404(Product, id=product_id)
+    quantity = int(request.POST.get('quantity', 1))
+    cart.add(product, quantity)
+    return redirect('cart:cart_detail')
+
+def remove_from_cart(request, product_id):
+    cart = Cart(request)
+    product = get_object_or_404(Product, id=product_id)
+    cart.remove(product)
+    return redirect('cart:cart_detail')
+
+def cart_detail(request):
+    cart = Cart(request)
+    return render(request, 'cart/detail.html', {'cart': cart})
+cart/templates/cart/detail.html
+html
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mt-5">
+    <h2>Your Cart</h2>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Product</th>
+                <th>Quantity</th>
+                <th>Price</th>
+                <th>Total</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in cart %}
+            <tr>
+                <td>{{ item.product.name }}</td>
+                <td>{{ item.quantity }}</td>
+                <td>${{ item.price }}</td>
+                <td>${{ item.total_price }}</td>
+                <td>
+                    <a href="{% url 'cart:remove_from_cart' item.product.id %}" class="btn btn-danger btn-sm">Remove</a>
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="5">Your cart is empty</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr>
+                <td colspan="3"><strong>Total</strong></td>
+                <td colspan="2"><strong>${{ cart.get_total_price }}</strong></td>
+            </tr>
+        </tfoot>
+    </table>
+    <div class="text-right">
+        <a href="{% url 'products:product_list' %}" class="btn btn-secondary">Continue Shopping</a>
+        <a href="{% url 'checkout:checkout' %}" class="btn btn-primary">Checkout</a>
+    </div>
+</div>
+{% endblock %}
+checkout/views.py
+python
+import stripe
+from django.conf import settings
+from django.views.generic import TemplateView
+from django.views.decorators.csrf import csrf_exempt
+from django.http import JsonResponse
+from django.shortcuts import render, redirect
+from cart.utils import Cart
+
+stripe.api_key = settings.STRIPE_SECRET_KEY
+
+class CheckoutView(TemplateView):
+    template_name = 'checkout/checkout.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        cart = Cart(self.request)
+        context['cart'] = cart
+        context['stripe_public_key'] = settings.STRIPE_PUBLIC_KEY
+        return context
+
+@csrf_exempt
+def create_payment(request):
+    if request.method == 'POST':
+        cart = Cart(request)
+        total = cart.get_total_price()
+        
+        try:
+            # Create a PaymentIntent
+            intent = stripe.PaymentIntent.create(
+                amount=int(total * 100),  # Convert to cents
+                currency='usd',
+                automatic_payment_methods={'enabled': True},
+            )
+            return JsonResponse({'clientSecret': intent.client_secret})
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=403)
+    return redirect('checkout:checkout')
+
+def payment_success(request):
+    cart = Cart(request)
+    cart.clear()
+    return render(request, 'checkout/success.html')
+
+def payment_cancel(request):
+    return render(request, 'checkout/cancel.html')
+checkout/urls.py
+python
+from django.urls import path
+from . import views
+
+app_name = 'checkout'
+
+urlpatterns = [
+    path('', views.CheckoutView.as_view(), name='checkout'),
+    path('create-payment/', views.create_payment, name='create_payment'),
+    path('success/', views.payment_success, name='success'),
+    path('cancel/', views.payment_cancel, name='cancel'),
+]
+checkout/templates/checkout/checkout.html
+html
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mt-5">
+    <h2>Checkout</h2>
+    <div class="row">
+        <div class="col-md-6">
+            <h4>Order Summary</h4>
+            <ul class="list-group mb-4">
+                {% for item in cart %}
+                <li class="list-group-item d-flex justify-content-between">
+                    <span>{{ item.product.name }} (x{{ item.quantity }})</span>
+                    <span>${{ item.total_price }}</span>
+                </li>
+                {% endfor %}
+                <li class="list-group-item d-flex justify-content-between">
+                    <strong>Total</strong>
+                    <strong>${{ cart.get_total_price }}</strong>
+                </li>
+            </ul>
+        </div>
+        <div class="col-md-6">
+            <h4>Payment Details</h4>
+            <form id="payment-form">
+                <div id="card-element" class="mb-3"></div>
+                <div id="card-errors" role="alert" class="text-danger mb-3"></div>
+                <button id="submit-button" class="btn btn-primary btn-block">Pay Now</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script src="https://js.stripe.com/v3/"></script>
+<script>
+    const stripe = Stripe('{{ stripe_public_key }}');
+    const elements = stripe.elements();
+    const cardElement = elements.create('card');
+    cardElement.mount('#card-element');
+
+    const form = document.getElementById('payment-form');
+    const submitButton = document.getElementById('submit-button');
+    const cardErrors = document.getElementById('card-errors');
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        submitButton.disabled = true;
+
+        // Create payment method
+        const { paymentMethod, error } = await stripe.createPaymentMethod({
+            type: 'card',
+            card: cardElement,
+        });
+
+        if (error) {
+            cardErrors.textContent = error.message;
+            submitButton.disabled = false;
+        } else {
+            // Create payment on server
+            fetch('{% url "checkout:create_payment" %}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token }}'
+                },
+                body: JSON.stringify({ payment_method_id: paymentMethod.id })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.clientSecret) {
+                    // Confirm payment on client
+                    return stripe.confirmCardPayment(data.clientSecret, {
+                        payment_method: paymentMethod.id
+                    });
+                } else {
+                    throw new Error('Server error');
+                }
+            })
+            .then(result => {
+                if (result.error) {
+                    cardErrors.textContent = result.error.message;
+                    submitButton.disabled = false;
+                } else {
+                    // Successful payment
+                    window.location.href = '{% url "checkout:success" %}';
+                }
+            })
+            .catch(error => {
+                cardErrors.textContent = error.message;
+                submitButton.disabled = false;
+            });
+        }
+    });
+</script>
+{% endblock %}
+checkout/templates/checkout/success.html
+html
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mt-5 text-center">
+    <h2 class="text-success">Payment Successful!</h2>
+    <p>Thank you for your purchase.</p>
+    <a href="{% url 'products:product_list' %}" class="btn btn-primary">Continue Shopping</a>
+</div>
+{% endblock %}
+checkout/templates/checkout/cancel.html
+html
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mt-5 text-center">
+    <h2 class="text-danger">Payment Canceled</h2>
+    <p>Your payment was not completed.</p>
+    <a href="{% url 'checkout:checkout' %}" class="btn btn-primary">Try Again</a>
+</div>
+{% endblock %}
+templates/base.html
+html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My E-commerce</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="{% url 'products:product_list' %}">MyStore</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'cart:cart_detail' %}">
+                            <i class="bi bi-cart"></i> Cart
+                            <span class="badge bg-primary">{{ cart|length }}</span>
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container my-4">
+        {% block content %}
+        {% endblock %}
+    </div>
+
+    <footer class="bg-dark text-white py-4 mt-5">
+        <div class="container text-center">
+            <p>&copy; 2023 My E-commerce Store. All rights reserved.</p>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
+3. Run the Project
+Set up MySQL Database:
+
+Open XAMPP and start MySQL
+
+Create a database named ecommerce_db in phpMyAdmin
+
+Run Migrations:
+
+bash
+python manage.py makemigrations
+python manage.py migrate
+Create Superuser:
+
+bash
+python manage.py createsuperuser
+Run Development Server:
+
+bash
+python manage.py runserver
+Access the Application:
+
+Visit http://localhost:8000/ for product listings
+
+Visit http://localhost:8000/admin/ to add products
+
+Key Features Implemented:
+Product Management:
+
+Product listing and detail views
+
+Admin interface for managing products
+
+Shopping Cart:
+
+Session-based cart functionality
+
+Add/remove items
+
+Cart summary view
+
+Stripe Integration:
+
+Payment processing with Stripe Elements
+
+Secure card handling
+
+Payment success/failure handling
+
+Responsive UI:
+
+Bootstrap 5 for responsive design
+
+Clean, user-friendly interface
+
+Next Steps:
+Add user authentication
+
+Implement order history
+
+Add product categories and search
+
+Implement Stripe webhooks for payment confirmation
+
+Add shipping address collection
+
+This implementation provides a solid foundation for your e-commerce project. You can extend it further based on your requirements!
+
+This response is AI-generated, for reference only.
+write manage.py code!
+Here's the standard manage.py file for your Django project. This file is automatically generated when you create a Django project and should be placed in your project root directory:
+
+File Path: myecommerce/manage.py
+
+python
+#!/usr/bin/env python
+"""Django's command-line utility for administrative tasks."""
+import os
+import sys
+
+def main():
+    """Run administrative tasks."""
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myecommerce.settings')
+    try:
+        from django.core.management import execute_from_command_line
+    except ImportError as exc:
+        raise ImportError(
+            "Couldn't import Django. Are you sure it's installed and "
+            "available on your PYTHONPATH environment variable? Did you "
+            "forget to activate a virtual environment?"
+        ) from exc
+    execute_from_command_line(sys.argv)
+
+if __name__ == '__main__':
+    main()
+Key Components of manage.py:
+Environment Setup:
+
+python
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myecommerce.settings')
+Sets the default Django settings module for your project
+
+Command Execution:
+
+python
+execute_from_command_line(sys.argv)
+Handles all Django commands (runserver, migrate, etc.)
+
+How to Use manage.py:
+Activate your virtual environment (Windows):
+
+bash
+venv\Scripts\activate
+Run the development server:
+
+bash
+python manage.py runserver
+Create database migrations:
+
+bash
+python manage.py makemigrations
+Apply migrations to database:
+
+bash
+python manage.py migrate
+Create a superuser (admin):
+
+bash
+python manage.py createsuperuser
+Start interactive shell:
+
+bash
+python manage.py shell
+Collect static files (for production):
+
+bash
+python manage.py collectstatic
+Complete Project Structure with manage.py:
+text
+myecommerce/
+├── myecommerce/               # Project config
+│   ├── __init__.py
+│   ├── settings.py
+│   ├── urls.py
+│   ├── wsgi.py                # WSGI config
+│   └── asgi.py                # ASGI config (optional)
+├── products/                  # Products app
+│   ├── migrations/
+│   ├── templates/
+│   ├── __init__.py
+│   ├── admin.py
+│   ├── apps.py
+│   ├── models.py
+│   ├── views.py
+│   └── urls.py
+├── cart/                      # Cart app
+│   ├── templatetags/
+│   ├── __init__.py
+│   ├── utils.py
+│   ├── views.py
+│   ├── urls.py
+│   └── context_processors.py
+├── checkout/                  # Payments app
+│   ├── templates/
+│   ├── __init__.py
+│   ├── views.py
+│   └── urls.py
+├── templates/                 # Base templates
+│   └── base.html
+├── static/                    # Static assets
+├── venv/                      # Virtual environment
+├── db.sqlite3                 # SQLite database (dev only)
+├── manage.py                  # THIS FILE
+└── requirements.txt           # Dependencies
+Important Notes:
+Permissions (Linux/Mac):
+
+bash
+chmod +x manage.py  # Make executable if needed
+Windows Execution:
+
+Always run with python manage.py [command] (not ./manage.py)
+
+Virtual Environment:
+
+Make sure to activate your venv before running manage.py commands
+
+Database Configuration:
+
+The MySQL configuration should already be in myecommerce/settings.py
+
+First Run:
+
+bash
+# After creating project
+python manage.py migrate
+python manage.py createsuperuser
+python manage.py runserver
+This manage.py file is the central command hub for your Django project. You'll use it frequently during development for database operations, running the server, and other administrative tasks.
+
+$ python manage.py runserver
+Watching for file changes with StatReloader
+Performing system checks...
+
+System check identified no issues (0 silenced).
+Exception in thread django-main-thread:
+Traceback (most recent call last):
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\threading.py", line 1043, in _bootstrap_inner
+    self.run()
+    ~~~~~~~~^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\threading.py", line 994, in run  
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\utils\autoreload.py", line 64, in wrapper
+    fn(*args, **kwargs)
+    ~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\management\commands\runserver.py", line 137, in inner_run
+    self.check_migrations()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\management\base.py", line 587, in check_migrations
+    executor = MigrationExecutor(connections[DEFAULT_DB_ALIAS])
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\migrations\executor.py", line 18, in __init__
+    self.loader = MigrationLoader(self.connection)
+                  ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\migrations\loader.py", line 58, in __init__
+    self.build_graph()
+    ~~~~~~~~~~~~~~~~^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\migrations\loader.py", line 235, in build_graph
+    self.applied_migrations = recorder.applied_migrations()
+                              ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\migrations\recorder.py", line 89, in applied_migrations
+    if self.has_table():
+       ~~~~~~~~~~~~~~^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\migrations\recorder.py", line 63, in has_table
+    with self.connection.cursor() as cursor:
+         ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\utils\asyncio.py", line 26, in inner
+    return func(*args, **kwargs)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\base\base.py", line 320, in cursor
+    return self._cursor()
+           ~~~~~~~~~~~~^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\base\base.py", line 296, in _cursor
+    self.ensure_connection()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\utils\asyncio.py", line 26, in inner
+    return func(*args, **kwargs)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\base\base.py", line 279, in ensure_connection
+    self.connect()
+    ~~~~~~~~~~~~^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\utils\asyncio.py", line 26, in inner
+    return func(*args, **kwargs)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\base\base.py", line 258, in connect
+    self.init_connection_state()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\mysql\base.py", line 266, in init_connection_state
+    super().init_connection_state()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\base\base.py", line 225, in init_connection_state
+    self.check_database_version_supported()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\base\base.py", line 201, in check_database_version_supported
+    raise NotSupportedError(
+    ...<2 lines>...
+    )
+django.db.utils.NotSupportedError: MariaDB 10.5 or later is required (found 10.4.32).
+The error indicates that your MariaDB version (10.4.32) is not compatible with Django's requirements. Django 4.x requires MariaDB 10.5 or later. Here's how to resolve this:
+
+Solution 1: Upgrade MariaDB (Recommended)
+Download the latest MariaDB version (≥10.5) from MariaDB.org
+
+Stop XAMPP
+
+Install the new MariaDB version
+
+Update your PATH environment variable to point to the new MariaDB installation
+
+Start the new MariaDB service
+
+Solution 2: Downgrade Django (Temporary Fix)
+If you can't upgrade MariaDB immediately, downgrade Django to a version that supports MariaDB 10.4:
+
+bash
+pip uninstall django
+pip install django==3.2.18  # Last version with MariaDB 10.4 support
+Solution 3: Use SQLite for Development
+Switch to SQLite temporarily for development:
+
+Modify myecommerce/settings.py:
+
+python
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
+    }
+}
+Run migrations:
+
+bash
+python manage.py makemigrations
+python manage.py migrate
+Verify MySQL Version
+To check your MySQL/MariaDB version:
+
+Open XAMPP and start MySQL
+
+Open phpMyAdmin (usually at http://localhost/phpmyadmin)
+
+Look for the version number in the bottom right corner
+
+After Upgrading MariaDB
+Create the database in phpMyAdmin:
+
+sql
+CREATE DATABASE ecommerce_db;
+Update settings.py with MySQL configuration:
+
+python
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': 'ecommerce_db',
+        'USER': 'root',
+        'PASSWORD': '',
+        'HOST': 'localhost',
+        'PORT': '3306',
+        'OPTIONS': {
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+        }
+    }
+}
+Run migrations:
+
+bash
+python manage.py makemigrations
+python manage.py migrate
+Additional Troubleshooting
+If you still face issues after upgrading MariaDB:
+
+Ensure the MySQL service is running in XAMPP
+
+Verify database credentials in settings.py
+
+Install the MySQL client:
+
+bash
+pip install mysqlclient
+Check for port conflicts (default is 3306)
+
+After resolving the database issue, you should be able to run the server:
+
+bash
+python manage.py runserver
+$ python manage.py runserver
+Watching for file changes with StatReloader
+Performing system checks...
+
+System check identified no issues (0 silenced).
+Exception in thread django-main-thread:
+Traceback (most recent call last):
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\servers\basehttp.py", line 48, in get_internal_wsgi_application
+    return import_string(app_path)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\utils\module_loading.py", line 30, in import_string
+    return cached_import(module_path, class_name)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\utils\module_loading.py", line 15, in cached_import
+    module = import_module(module_path)
+_loading.py", line 15, in cached_import
+    module = import_module(module_path)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\importlib\__init__.py", line 88, 
+in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1324, in _find_and_load_unlocked
+ModuleNotFoundError: No module named 'ecommerce.wsgi'
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\importlib\__init__.py", line 88, 
+in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1324, in _find_and_load_unlocked
+ModuleNotFoundError: No module named 'ecommerce.wsgi'
+
+The above exception was the direct cause of the following exception:
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1324, in _find_and_load_unlocked
+ModuleNotFoundError: No module named 'ecommerce.wsgi'
+
+The above exception was the direct cause of the following exception:
+  File "<frozen importlib._bootstrap>", line 1324, in _find_and_load_unlocked
+ModuleNotFoundError: No module named 'ecommerce.wsgi'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\threading.py", line 1043, in _bootstrap_inner
+    self.run()
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\threading.py", line 1043, in _bootstrap_inner
+    self.run()
+
+Traceback (most recent call last):
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\threading.py", line 1043, in _bootstrap_inner
+    self.run()
+    ~~~~~~~~^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\threading.py", line 994, in run  
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\utils\autoreload.py", line 64, in wrapper
+    fn(*args, **kwargs)
+tstrap_inner
+    self.run()
+    ~~~~~~~~^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\threading.py", line 994, in run  
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\utils\autoreload.py", line 64, in wrapper
+    fn(*args, **kwargs)
+    ~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\management\commands\runserver.py", line 143, in inner_run
+    handler = self.get_handler(*args, **options)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\contrib\stat    ~~~~~~~~^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\threading.py", line 994, in run  
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\utils\autoreload.py", line 64, in wrapper
+    fn(*args, **kwargs)
+    ~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\management\commands\runserver.py", line 143, in inner_run
+    handler = self.get_handler(*args, **options)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\contrib\stat  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\utils\autoreload.py", line 64, in wrapper
+    fn(*args, **kwargs)
+    ~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\management\commands\runserver.py", line 143, in inner_run
+    handler = self.get_handler(*args, **options)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\contrib\staticfiles\management\commands\runserver.py", line 31, in get_handler
+    handler = super().get_handler(*args, **options)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\management\commands\runserver.py", line 73, in get_handler
+    return get_internal_wsgi_application()
+    ~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\management\commands\runserver.py", line 143, in inner_run
+    handler = self.get_handler(*args, **options)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\contrib\staticfiles\management\commands\runserver.py", line 31, in get_handler
+    handler = super().get_handler(*args, **options)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\management\commands\runserver.py", line 73, in get_handler
+    return get_internal_wsgi_application()
+icfiles\management\commands\runserver.py", line 31, in get_handler
+    handler = super().get_handler(*args, **options)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\management\commands\runserver.py", line 73, in get_handler
+    return get_internal_wsgi_application()
+    return get_internal_wsgi_application()
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\servers\basehttp.py", line 50, in get_internal_wsgi_application
+    raise ImproperlyConfigured(
+    ...<2 lines>...
+    ) from err
+django.core.exceptions.ImproperlyConfigured: WSGI application 'ecommerce.wsgi.application' could 
+not be loaded; Error importing module.
+The error indicates that Django is unable to find the WSGI module for your project. This is likely due to a configuration mismatch in your project structure. Let's fix this step by step:
+
+Problem Analysis
+The key error is:
+
+text
+ModuleNotFoundError: No module named 'ecommerce.wsgi'
+This typically happens when:
+
+Your project name in settings doesn't match the actual directory structure
+
+The WSGI configuration is pointing to the wrong module
+
+You're running the command from the wrong directory
+
+Solution
+Check your project structure:
+Your project structure should look like this:
+
+text
+myecommerce/          # Project root (where manage.py is)
+├── myecommerce/      # Project config directory
+│   ├── __init__.py
+│   ├── settings.py
+│   ├── urls.py
+│   └── wsgi.py       # This file must exist
+├── products/
+├── cart/
+├── checkout/
+├── templates/
+├── static/
+└── manage.py
+Fix settings.py:
+In myecommerce/settings.py, ensure these settings are correct:
+
+python
+ROOT_URLCONF = 'myecommerce.urls'
+WSGI_APPLICATION = 'myecommerce.wsgi.application'
+Create/modify wsgi.py:
+Create this file at myecommerce/wsgi.py:
+
+python
+"""
+WSGI config for myecommerce project.
+
+It exposes the WSGI callable as a module-level variable named ``application``.
+
+For more information on this file, see
+https://docs.djangoproject.com/en/4.2/howto/deployment/wsgi/
+"""
+
+import os
+from django.core.wsgi import get_wsgi_application
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myecommerce.settings')
+
+application = get_wsgi_application()
+Fix manage.py:
+Ensure manage.py has:
+
+python
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myecommerce.settings')
+Check your working directory:
+Run all commands from the directory where manage.py is located:
+
+bash
+cd path/to/myecommerce
+python manage.py runserver
+If You Renamed Your Project
+If you initially created the project as "ecommerce" and renamed it to "myecommerce", you need to:
+
+Rename the inner directory from ecommerce to myecommerce
+
+Update all references in your code:
+
+In manage.py
+
+In myecommerce/wsgi.py
+
+In myecommerce/settings.py
+
+Final Project Structure Verification
+Ensure your structure matches:
+
+text
+myecommerce/          # Outer directory
+├── myecommerce/      # Inner config directory
+│   ├── __init__.py
+│   ├── asgi.py
+│   ├── settings.py
+│   ├── urls.py
+│   └── wsgi.py       # THIS IS CRITICAL
+├── products/
+│   ├── migrations/
+│   ├── templates/
+│   ├── __init__.py
+│   ├── admin.py
+│   ├── apps.py
+│   ├── models.py
+│   ├── views.py
+│   └── urls.py
+├── cart/
+│   ├── templatetags/
+│   ├── __init__.py
+│   ├── utils.py
+│   ├── views.py
+│   └── urls.py
+├── checkout/
+│   ├── templates/
+│   ├── __init__.py
+│   ├── views.py
+│   └── urls.py
+├── templates/
+│   └── base.html
+├── static/
+├── venv/
+├── db.sqlite3
+├── manage.py
+└── requirements.txt
+Run Command
+After making these changes, run:
+
+bash
+python manage.py runserver
+This should resolve the WSGI module not found error. If you still encounter issues, double-check:
+
+The name of your inner project directory matches what's in settings.py
+
+wsgi.py exists in the inner project directory
+
+You're running commands from the correct directory (where manage.py is)
+
+$ python manage.py runserver
+Watching for file changes with StatReloader
+Performing system checks...
+
+System check identified no issues (0 silenced).
+Exception in thread django-main-thread:
+Traceback (most recent call last):
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\servers\basehttp.py", line 48, in get_internal_wsgi_application
+    return import_string(app_path)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\utils\module_loading.py", line 30, in import_string  
+    return cached_import(module_path, class_name)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\utils\module_loading.py", line 15, in cached_import  
+    module = import_module(module_path)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\importlib\__init__.py", line 88, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)      
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^      
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import    
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load 
+  File "<frozen importlib._bootstrap>", line 1324, in _find_and_load_unlocked
+ModuleNotFoundError: No module named 'myecommerce.wsgi'
+
+The above exception was the direct cause of the following exception: 
+
+Traceback (most recent call last):
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\threading.py", line 1043, in _bootstrap_inner
+    self.run()
+    ~~~~~~~~^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\threading.py", line 994, in run      
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\utils\autoreload.py", line 64, in wrapper
+    fn(*args, **kwargs)
+    ~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\management\commands\runserver.py", line 143, in inner_run
+    handler = self.get_handler(*args, **options)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\contrib\staticfiles\management\commands\runserver.py", line 31, in get_handler
+    handler = super().get_handler(*args, **options)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\management\commands\runserver.py", line 73, in get_handler
+    return get_internal_wsgi_application()
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\servers\basehttp.py", line 50, in get_internal_wsgi_application
+    raise ImproperlyConfigured(
+    ...<2 lines>...
+    ) from err
+django.core.exceptions.ImproperlyConfigured: WSGI application 'myecommerce.wsgi.application' could not be loaded; Error importing module.
+It looks like we still have an issue with the WSGI configuration. The error is specifically:
+
+text
+ModuleNotFoundError: No module named 'myecommerce.wsgi'
+Let's fix this step by step. The problem is that Django can't find your WSGI module, which is crucial for running the development server.
+
+Solution:
+Verify your project structure:
+Your directory structure should look exactly like this:
+
+text
+myecommerce/          # This is your project root (contains manage.py)
+├── myecommerce/      # This is your project package (same name as root)
+│   ├── __init__.py
+│   ├── settings.py
+│   ├── urls.py
+│   └── wsgi.py       # This file must exist!
+├── products/
+├── cart/
+├── checkout/
+├── templates/
+├── static/
+└── manage.py
+Create the wsgi.py file:
+Create a new file at myecommerce/myecommerce/wsgi.py with this content:
+
+python
+"""
+WSGI config for myecommerce project.
+
+It exposes the WSGI callable as a module-level variable named ``application``.
+
+For more information on this file, see
+https://docs.djangoproject.com/en/4.2/howto/deployment/wsgi/
+"""
+
+import os
+from django.core.wsgi import get_wsgi_application
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myecommerce.settings')
+
+application = get_wsgi_application()
+Update settings.py:
+In myecommerce/myecommerce/settings.py, ensure you have:
+
+python
+WSGI_APPLICATION = 'myecommerce.wsgi.application'
+Check manage.py:
+Ensure manage.py contains:
+
+python
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myecommerce.settings')
+Add init.py files:
+Make sure all Python package directories have an __init__.py file (even if empty):
+
+myecommerce/myecommerce/__init__.py
+
+myecommerce/products/__init__.py
+
+myecommerce/cart/__init__.py
+
+myecommerce/checkout/__init__.py
+
+Run from the correct directory:
+Execute commands from the directory containing manage.py:
+
+bash
+cd path/to/myecommerce
+python manage.py runserver
+If the Problem Persists:
+Check your PYTHONPATH:
+Temporarily add this to manage.py before the main function:
+
+python
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'myecommerce'))
+Try an absolute import:
+In wsgi.py, change the settings module to:
+
+python
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myecommerce.settings')
+Verify folder names:
+Ensure your inner project folder is exactly named myecommerce (case-sensitive).
+
+Create a minimal test:
+Create a file test_import.py in the same directory as manage.py:
+
+python
+from myecommerce.wsgi import application
+print("Successfully imported WSGI application!")
+Run it with:
+
+bash
+python test_import.py
+This will show any import errors.
+
+Final Checklist:
+You have wsgi.py in myecommerce/myecommerce/
+
+myecommerce/myecommerce/__init__.py exists (can be empty)
+
+manage.py sets DJANGO_SETTINGS_MODULE to 'myecommerce.settings'
+
+settings.py has WSGI_APPLICATION = 'myecommerce.wsgi.application'
+
+You're running commands from the directory containing manage.py
+
+After making these changes, try running the server again:
+
+bash
+python manage.py runserver
+This should resolve the WSGI configuration error. If you still encounter issues, there might be a naming mismatch between your project directory structure and the Python import paths.
+
+$ python manage.py runserver
+Watching for file changes with StatReloader
+Performing system checks...
+
+System check identified no issues (0 silenced).
+August 03, 2025 - 01:43:01
+Django version 5.2.4, using settings 'myecommerce.settings'
+Starting development server at http://127.0.0.1:8000/      
+Quit the server with CTRL-BREAK.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Great! The Django development server is now running successfully. You can access your application at http://127.0.0.1:8000/.
+
+Next Steps to Complete Your E-commerce Project:
+Create Database Tables:
+Open a new terminal window (with the same virtual environment activated) and run:
+
+bash
+python manage.py makemigrations
+python manage.py migrate
+Create a Superuser (Admin Account):
+
+bash
+python manage.py createsuperuser
+Follow the prompts to create an admin account.
+
+Add Products:
+
+Access the admin panel at http://127.0.0.1:8000/admin
+
+Log in with your superuser credentials
+
+Add products through the admin interface
+
+Set Up Stripe Keys:
+
+Get your Stripe API keys from https://dashboard.stripe.com/test/apikeys
+
+Add them to myecommerce/settings.py:
+
+python
+STRIPE_PUBLIC_KEY = 'your_public_key_here'
+STRIPE_SECRET_KEY = 'your_secret_key_here'
+Test the Application Flow:
+
+Browse products at http://127.0.0.1:8000/
+
+Add items to your cart
+
+View cart at http://127.0.0.1:8000/cart/view/
+
+Checkout at http://127.0.0.1:8000/checkout/
+
+Use test card 4242 4242 4242 4242 for payments
+
+Key URLs to Test:
+Product listings: http://127.0.0.1:8000/
+
+Admin panel: http://127.0.0.1:8000/admin
+
+Shopping cart: http://127.0.0.1:8000/cart/view/
+
+Checkout: http://127.0.0.1:8000/checkout/
+
+Troubleshooting Tips:
+If you see "No products available", add some through the admin panel
+
+If images don't load, create a media folder in your project root
+
+For Stripe test payments, use:
+
+Card: 4242 4242 4242 4242
+
+Any future expiration date
+
+Any 3-digit CVC
+
+To Stop the Server:
+Press CTRL+C in the terminal where the server is running.
+
+You now have a fully functional e-commerce platform with product management, shopping cart, and Stripe payments! You can continue building on this foundation by adding features like user authentication, order history, or product categories.
+
+This response is AI-generated, for reference only.
+Internal Server Error: /
+Traceback (most recent call last):
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\handlers\base.py", line 197, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "C:\Users\pc\python\myecommerce\products\views.py", line 6, in product_list
+    return render(request, 'products/list.html', {'products': products})
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\shortcuts.py", line 25, in render
+    content = loader.render_to_string(template_name, context, request, using=using)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\loader.py", line 62, in render_to_string
+    return template.render(context, request)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\backends\django.py", line 107, in render
+    return self.template.render(context)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\base.py", line 169, in render
+    with context.bind_template(self):
+         ~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\contextlib.py", line 141, in __enter__
+    return next(self.gen)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\context.py", line 259, in bind_template
+    context = processor(self.request)
+  File "C:\Users\pc\python\myecommerce\cart\context_processors.py", line 4, in cart
+    return {'cart': Cart(request)}
+                    ~~~~^^^^^^^^^
+  File "C:\Users\pc\python\myecommerce\cart\utils.py", line 8, in __init__
+    cart = self.session.get(settings.CART_SESSION_ID)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\conf\__init__.py", line 83, in __getattr__
+    val = getattr(_wrapped, name)
+AttributeError: 'Settings' object has no attribute 'CART_SESSION_ID'
+[03/Aug/2025 01:46:25] "GET / HTTP/1.1" 500 108858
+This error occurs because the CART_SESSION_ID setting is missing from your Django configuration. Let's fix this:
+
+Solution:
+Add the missing setting to myecommerce/settings.py:
+
+python
+# Add this to the bottom of settings.py
+CART_SESSION_ID = 'cart'
+Update the Cart utility class in cart/utils.py to handle cases where the setting might be missing (good practice):
+
+python
+from decimal import Decimal
+from django.conf import settings
+from products.models import Product
+
+# Add a default session ID in case the setting is missing
+DEFAULT_CART_SESSION_ID = getattr(settings, 'CART_SESSION_ID', 'cart')
+
+class Cart:
+    def __init__(self, request):
+        self.session = request.session
+        cart = self.session.get(DEFAULT_CART_SESSION_ID)
+        if not cart:
+            cart = self.session[DEFAULT_CART_SESSION_ID] = {}
+        self.cart = cart
+    
+    # ... rest of the Cart class remains the same ...
+Explanation of the Fix:
+CART_SESSION_ID: This setting defines the key that Django will use to store cart information in the user's session.
+
+DEFAULT_CART_SESSION_ID: This provides a fallback value in case the setting is not defined.
+
+Additional Steps to Prevent Future Issues:
+Create a media folder:
+
+Create a media folder in your project root (same level as manage.py)
+
+Add an empty products folder inside media
+
+Add sample products:
+
+Run python manage.py createsuperuser if you haven't already
+
+Go to http://127.0.0.1:8000/admin
+
+Add some products with images
+
+Collect static files:
+
+bash
+python manage.py collectstatic
+Verify the Fix:
+After making these changes, restart your server:
+
+bash
+python manage.py runserver
+Your application should now work correctly. The home page should load without errors, and you should see:
+
+The product listing page if you've added products
+
+A "No products available" message if you haven't added any yet
+
+Key Files to Confirm:
+myecommerce/settings.py should contain:
+
+python
+# At the bottom of the file
+CART_SESSION_ID = 'cart'
+
+# Also ensure these settings exist
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+cart/utils.py should have:
+
+python
+from django.conf import settings
+
+# Add this line below the imports
+DEFAULT_CART_SESSION_ID = getattr(settings, 'CART_SESSION_ID', 'cart')
+
+class Cart:
+    def __init__(self, request):
+        self.session = request.session
+        cart = self.session.get(DEFAULT_CART_SESSION_ID)
+        # ... rest of the code ...
+This solution addresses the immediate error and adds robustness to your cart implementation.
+
+Internal Server Error: /
+Traceback (most recent call last):
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\utils.py", line 105, in _execute
+    return self.cursor.execute(sql, params)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\sqlite3\base.py", line 360, in execute
+    return super().execute(query, params)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such table: products_product
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\handlers\base.py", line 197, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "C:\Users\pc\python\myecommerce\products\views.py", line 6, in product_list
+    return render(request, 'products/list.html', {'products': products})
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\shortcuts.py", line 25, in render
+    content = loader.render_to_string(template_name, context, request, using=using)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\loader.py", line 62, in render_to_string
+    return template.render(context, request)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\backends\django.py", line 107, in render
+    return self.template.render(context)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\base.py", line 171, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\base.py", line 163, in _render
+    return self.nodelist.render(context)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\base.py", line 1016, in render
+    return SafeString("".join([node.render_annotated(context) for node in self]))
+                               ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\base.py", line 977, in render_annotated
+    return self.render(context)
+           ~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\loader_tags.py", line 159, in render
+    return compiled_parent._render(context)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\base.py", line 163, in _render
+    return self.nodelist.render(context)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\base.py", line 1016, in render
+    return SafeString("".join([node.render_annotated(context) for node in self]))
+                               ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\base.py", line 977, in render_annotated
+    return self.render(context)
+           ~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\loader_tags.py", line 65, in render
+    result = block.nodelist.render(context)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\base.py", line 1016, in render
+    return SafeString("".join([node.render_annotated(context) for node in self]))
+                               ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\base.py", line 977, in render_annotated
+    return self.render(context)
+           ~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\defaulttags.py", line 199, in render
+    len_values = len(values)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\models\query.py", line 366, in __len__
+    self._fetch_all()
+    ~~~~~~~~~~~~~~~^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\models\query.py", line 1949, in _fetch_all
+    self._result_cache = list(self._iterable_class(self))
+                         ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\models\query.py", line 91, in __iter__
+    results = compiler.execute_sql(
+        chunked_fetch=self.chunked_fetch, chunk_size=self.chunk_size
+    )
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\models\sql\compiler.py", line 1623, in execute_sql
+    cursor.execute(sql, params)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\utils.py", line 122, in execute
+    return super().execute(sql, params)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\utils.py", line 79, in execute
+    return self._execute_with_wrappers(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        sql, params, many=False, executor=self._execute
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\utils.py", line 92, in _execute_with_wrappers
+    return executor(sql, params, many, context)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\utils.py", line 100, in _execute
+    with self.db.wrap_database_errors:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\utils.py", line 91, in __exit__
+    raise dj_exc_value.with_traceback(traceback) from exc_value
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\utils.py", line 105, in _execute
+    return self.cursor.execute(sql, params)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\sqlite3\base.py", line 360, in execute
+    return super().execute(query, params)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+django.db.utils.OperationalError: no such table: products_product
+[03/Aug/2025 01:49:37] "GET / HTTP/1.1" 500 202837
+This error occurs because the products_product table doesn't exist in your database. This typically happens when you haven't run database migrations after creating your models. Let's fix this:
+
+Solution:
+Create database migrations:
+
+bash
+python manage.py makemigrations
+Apply migrations to create database tables:
+
+bash
+python manage.py migrate
+Create a superuser to access the admin panel:
+
+bash
+python manage.py createsuperuser
+Add some products:
+
+Start the server: python manage.py runserver
+
+Go to http://127.0.0.1:8000/admin
+
+Log in with your superuser credentials
+
+Click "Products" and add some sample products
+
+Why This Happened:
+Django uses an ORM (Object-Relational Mapper) that requires migrations to create database tables
+
+When you defined the Product model in products/models.py, Django generated migration files
+
+The migrate command applies these migrations to create actual database tables
+
+Additional Checks:
+Verify your models are properly registered in admin.py:
+products/admin.py:
+
+python
+from django.contrib import admin
+from .models import Product
+
+admin.site.register(Product)
+Ensure your app is included in INSTALLED_APPS in settings.py:
+
+python
+INSTALLED_APPS = [
+    # ...
+    'products',
+    'cart',
+    'checkout',
+    # ...
+]
+After Fixing:
+Once you've completed these steps:
+
+The home page (http://127.0.0.1:8000/) should display your products
+
+You should be able to add products to your cart
+
+The checkout process with Stripe should work
+
+If You Still Encounter Issues:
+Reset the database (development only):
+
+bash
+python manage.py flush
+Then re-run migrations and create a superuser.
+
+Check your database connection in settings.py to ensure you're using the correct database.
+
+Verify your model definition in products/models.py:
+
+python
+from django.db import models
+
+class Product(models.Model):
+    name = models.CharField(max_length=100)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    description = models.TextField()
+    image = models.ImageField(upload_to='products/')
+    stock = models.PositiveIntegerField(default=10)
+
+    def __str__(self):
+        return self.name
+After completing these steps, your application should work correctly with a properly populated database.
+
+$ python manage.py createsuperuser
+Username (leave blank to use 'pc'): tareq
+Email address: trqhossain@gmail.com
+Password: 
+Password (again): 
+Error: Your passwords didn't match.
+Password: 
+Password (again): 
+Error: Your passwords didn't match.
+Password: 
+Password (again): 
+Error: Blank passwords aren't allowed.
+Password: 
+Password (again): 
+Error: Your passwords didn't match.
+Password: 
+when i try to enter password here it's not visible to show also return error!
+It's normal that the password isn't visible when you type it - this is a security feature in the terminal. The "passwords didn't match" error means you didn't type the exact same password both times.
+
+Let me help you create the superuser without these issues:
+
+Solution 1: Use the Shell Method (Recommended)
+Run the Django shell:
+
+bash
+python manage.py shell
+Execute these commands in the shell (copy and paste the entire block):
+
+python
+from django.contrib.auth import get_user_model
+User = get_user_model()
+User.objects.create_superuser(
+    username='tareq',
+    email='trqhossain@gmail.com',
+    password='your_secure_password'  # Replace with your actual password
+)
+print("Superuser created successfully!")
+Exit the shell:
+
+python
+exit()
+Solution 2: Non-Interactive Method
+Run this command with all details in one line:
+
+bash
+python manage.py createsuperuser --noinput --username=tareq --email=trqhossain@gmail.com
+Then set the password separately:
+
+bash
+python manage.py shell
+In the shell:
+
+python
+from django.contrib.auth.models import User
+u = User.objects.get(username='tareq')
+u.set_password('your_secure_password')
+u.save()
+exit()
+Solution 3: Interactive Method with Password Visibility
+Create a temporary password file:
+
+bash
+echo "your_secure_password" > mypassword.txt
+Run the createsuperuser command with password input:
+
+bash
+python manage.py createsuperuser --username=tareq --email=trqhossain@gmail.com < mypassword.txt
+Delete the password file:
+
+bash
+del mypassword.txt  # Windows
+# or
+# rm mypassword.txt  # Mac/Linux
+Important Notes:
+Use a strong password (at least 8 characters, mix of letters, numbers, symbols)
+
+After creating the superuser, log in at: http://127.0.0.1:8000/admin/
+
+You can change the password later in the admin interface
+
+If You Get "Username Already Exists"
+Delete the existing user first:
+
+bash
+python manage.py shell
+python
+from django.contrib.auth.models import User
+User.objects.get(username='tareq').delete()
+exit()
+Then try creating again.
+
+After creating your superuser, you'll be able to access the admin panel at http://127.0.0.1:8000/admin/ and add products to your store.
+
+Internal Server Error: /
+Traceback (most recent call last):
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\utils.py", line 105, in _execute
+    return self.cursor.execute(sql, params)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\sqlite3\base.py", line 360, in execute
+    return super().execute(query, params)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such table: products_product
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\handlers\base.py", line 197, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "C:\Users\pc\python\myecommerce\products\views.py", line 6, in product_list
+    return render(request, 'products/list.html', {'products': products})
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\shortcuts.py", line 25, in render
+    content = loader.render_to_string(template_name, context, request, using=using)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\loader.py", line 62, in render_to_string
+    return template.render(context, request)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\backends\django.py", line 107, in render
+    return self.template.render(context)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\base.py", line 171, in render
+    return self._render(context)
+           ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\base.py", line 163, in _render
+    return self.nodelist.render(context)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\base.py", line 1016, in render
+    return SafeString("".join([node.render_annotated(context) for node in self]))
+                               ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\base.py", line 977, in render_annotated
+    return self.render(context)
+           ~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\loader_tags.py", line 159, in render
+    return compiled_parent._render(context)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\base.py", line 163, in _render
+    return self.nodelist.render(context)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\base.py", line 1016, in render
+    return SafeString("".join([node.render_annotated(context) for node in self]))
+                               ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\base.py", line 977, in render_annotated
+    return self.render(context)
+           ~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\loader_tags.py", line 65, in render
+    result = block.nodelist.render(context)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\base.py", line 1016, in render
+    return SafeString("".join([node.render_annotated(context) for node in self]))
+                               ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\base.py", line 977, in render_annotated
+    return self.render(context)
+           ~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\defaulttags.py", line 199, in render
+    len_values = len(values)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\models\query.py", line 366, in __len__
+    self._fetch_all()
+    ~~~~~~~~~~~~~~~^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\models\query.py", line 1949, in _fetch_all
+    self._result_cache = list(self._iterable_class(self))
+                         ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\models\query.py", line 91, in __iter__
+    results = compiler.execute_sql(
+        chunked_fetch=self.chunked_fetch, chunk_size=self.chunk_size
+    )
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\models\sql\compiler.py", line 1623, in execute_sql
+    cursor.execute(sql, params)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\utils.py", line 122, in execute
+    return super().execute(sql, params)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\utils.py", line 79, in execute
+    return self._execute_with_wrappers(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        sql, params, many=False, executor=self._execute
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\utils.py", line 92, in _execute_with_wrappers
+    return executor(sql, params, many, context)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\utils.py", line 100, in _execute
+    with self.db.wrap_database_errors:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\utils.py", line 91, in __exit__
+    raise dj_exc_value.with_traceback(traceback) from exc_value
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\utils.py", line 105, in _execute
+    return self.cursor.execute(sql, params)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\sqlite3\base.py", line 360, in execute
+    return super().execute(query, params)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+django.db.utils.OperationalError: no such table: products_product
+[03/Aug/2025 01:59:06] "GET / HTTP/1.1" 500 202837
+The error no such table: products_product indicates that your database tables haven't been created yet. This happens because you haven't run database migrations after creating your models. Let's fix this:
+
+Step-by-Step Solution:
+Create database migrations:
+
+bash
+python manage.py makemigrations
+Apply the migrations to create database tables:
+
+bash
+python manage.py migrate
+Create a superuser (if you haven't already):
+
+bash
+python manage.py createsuperuser
+Start the development server:
+
+bash
+python manage.py runserver
+If You Still Encounter Issues:
+Reset the database (development only):
+
+bash
+python manage.py flush
+Then re-run migrations:
+
+bash
+python manage.py makemigrations
+python manage.py migrate
+Check your app registration in myecommerce/settings.py:
+
+python
+INSTALLED_APPS = [
+    # ...
+    'products',
+    'cart',
+    'checkout',
+    # ...
+]
+Verify your model definition in products/models.py:
+
+python
+from django.db import models
+
+class Product(models.Model):
+    name = models.CharField(max_length=100)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    description = models.TextField()
+    image = models.ImageField(upload_to='products/')
+    stock = models.PositiveIntegerField(default=10)
+
+    def __str__(self):
+        return self.name
+Check your database configuration in myecommerce/settings.py:
+
+python
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
+    }
+}
+After Running Migrations:
+Go to the admin panel: http://127.0.0.1:8000/admin/
+
+Log in with your superuser credentials
+
+Add some products:
+
+Click "Products"
+
+Click "Add Product"
+
+Fill in the details and upload an image
+
+Click "Save"
+
+Verify It's Working:
+Visit the home page: http://127.0.0.1:8000/
+
+You should see your products listed
+
+Test adding products to your cart
+
+Test the checkout process
+
+Common Reasons for This Error:
+Forgot to run makemigrations and migrate
+
+The app not being added to INSTALLED_APPS
+
+Model definition errors
+
+Database connection issues
+
+If you've completed these steps, your application should now work correctly with a properly populated database. The "no such table" error should be resolved.
+
+OperationalError at /
+no such table: products_product
+Request Method:	GET
+Request URL:	http://localhost:8000/
+Django Version:	5.2.4
+Exception Type:	OperationalError
+Exception Value:	
+no such table: products_product
+Exception Location:	C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\sqlite3\base.py, line 360, in execute
+Raised during:	products.views.product_list
+Python Executable:	C:\Users\pc\AppData\Local\Programs\Python\Python313\python.exe
+Python Version:	3.13.5
+Python Path:	
+['C:\\Users\\pc\\python\\myecommerce',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313\\python313.zip',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313\\DLLs',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313\\Lib',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages']
+Server time:	Sat, 02 Aug 2025 20:59:45 +0000
+This error confirms that the products_product table doesn't exist in your database. Let's fix this step-by-step:
+
+Solution:
+Stop the development server (if running) by pressing CTRL+C in your terminal.
+
+Create migrations for your products app:
+
+bash
+python manage.py makemigrations products
+Apply all migrations:
+
+bash
+python manage.py migrate
+Verify the migration was created:
+
+bash
+python manage.py showmigrations products
+You should see:
+
+text
+products
+ [X] 0001_initial
+Start the server again:
+
+bash
+python manage.py runserver
+If You Still Encounter Issues:
+Delete existing migrations (only for development):
+
+bash
+# Delete migration files
+del products\migrations\*.py
+
+# Keep the __init__.py file
+echo. > products\migrations\__init__.py
+Recreate migrations:
+
+bash
+python manage.py makemigrations products
+python manage.py migrate
+Reset the database (use with caution - deletes all data):
+
+bash
+python manage.py flush
+Then run migrations again.
+
+Verify Your Setup:
+Check your INSTALLED_APPS in myecommerce/settings.py:
+
+python
+INSTALLED_APPS = [
+    # ...
+    'products',  # Make sure this exists
+    'cart',
+    'checkout',
+    # ...
+]
+Confirm your model definition in products/models.py:
+
+python
+from django.db import models
+
+class Product(models.Model):
+    name = models.CharField(max_length=100)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    description = models.TextField()
+    image = models.ImageField(upload_to='products/')
+    stock = models.PositiveIntegerField(default=10)
+
+    def __str__(self):
+        return self.name
+Register the model in admin (products/admin.py):
+
+python
+from django.contrib import admin
+from .models import Product
+
+admin.site.register(Product)
+After Fixing:
+Access the admin panel: http://localhost:8000/admin/
+
+Add some products
+
+Visit the home page: http://localhost:8000/
+
+You should now see your products listed without errors.
+
+Common Mistakes:
+Forgetting to run makemigrations after creating models
+
+Not including the app in INSTALLED_APPS
+
+Running makemigrations without specifying the app when multiple apps exist
+
+Database file permissions issues
+
+If Using SQLite:
+Check if db.sqlite3 file exists in your project root. If not:
+
+bash
+# Create an empty database file
+type nul > db.sqlite3
+Then run migrations again.
+
+This should resolve the "no such table" error and get your application working.
+
+Please enter the correct username and password for a staff account. Note that both fields may be case-sensitive.
+It seems you're encountering an issue logging into the Django admin panel. Let's resolve this step by step:
+
+Solution:
+Create a new superuser (since your previous one might not have been created properly):
+
+bash
+python manage.py createsuperuser
+Follow the prompts to create a new admin account.
+
+If you get "username already exists":
+
+bash
+python manage.py shell
+Then run these commands in the Python shell:
+
+python
+from django.contrib.auth import get_user_model
+User = get_user_model()
+user = User.objects.get(username='tareq')
+user.is_staff = True
+user.is_superuser = True
+user.save()
+exit()
+Reset password for existing user:
+
+bash
+python manage.py changepassword tareq
+Verify the user in database (using Django shell):
+
+bash
+python manage.py shell
+python
+from django.contrib.auth import get_user_model
+User = get_user_model()
+user = User.objects.get(username='tareq')
+print(f"Username: {user.username}")
+print(f"Is staff: {user.is_staff}")
+print(f"Is superuser: {user.is_superuser}")
+print(f"Is active: {user.is_active}")
+exit()
+Common Solutions:
+Ensure user has staff status:
+
+is_staff must be True for admin access
+
+is_superuser should be True for full permissions
+
+Check user is active:
+
+is_active must be True
+
+Case sensitivity:
+
+Usernames are case-sensitive in Django
+
+Try "Tareq" vs "tareq"
+
+Password issues:
+
+Reset using changepassword command
+
+Ensure no trailing spaces when typing
+
+If All Else Fails:
+Create a new superuser with different username:
+
+bash
+python manage.py createsuperuser --username=admin --email=admin@example.com
+Check your database:
+
+Ensure django_migrations table exists
+
+Verify auth_user table has your user
+
+Check admin URL:
+
+Make sure you're going to http://localhost:8000/admin/
+
+Not http://localhost:8000/admin (without trailing slash)
+
+After Fixing:
+Log in at http://localhost:8000/admin/
+
+Add your products in the admin interface
+
+Visit http://localhost:8000/ to see your products
+
+If you're still having issues, please share:
+
+The output of python manage.py showmigrations
+
+The result of the user verification in the Django shell
+
+Any error messages you see when attempting to log in
+
+now how can i create product from admin side?
+To create products from the Django admin interface, follow these steps:
+
+1. Ensure Your Product Model is Registered in Admin
+First, make sure you've registered your Product model in the admin file:
+
+File: products/admin.py
+
+python
+from django.contrib import admin
+from .models import Product
+
+@admin.register(Product)
+class ProductAdmin(admin.ModelAdmin):
+    list_display = ('name', 'price', 'stock')
+    search_fields = ('name', 'description')
+2. Access the Admin Panel
+Start your development server:
+
+bash
+python manage.py runserver
+Go to the admin login page:
+http://localhost:8000/admin/
+
+Log in with your superuser credentials (username and password you created with createsuperuser)
+
+3. Create a New Product
+After logging in, you'll see a section called "PRODUCTS" with a "Products" link
+
+Click on "Products" to see existing products (initially empty)
+
+Click the "ADD PRODUCT" button in the top right corner
+
+Fill out the product form:
+
+Name: Product name (e.g., "Laptop")
+
+Price: Product price (e.g., "999.99")
+
+Description: Product description
+
+Image: Click "Choose File" to select a product image
+
+Stock: Available quantity
+
+Click "SAVE" to create the product
+
+4. Verify the Product
+After saving, you'll be redirected to the product list
+
+Your new product should appear in the list
+
+Visit your homepage to see the product: http://localhost:8000/
+
+Troubleshooting Tips:
+If you don't see the Products section:
+
+Ensure products is in INSTALLED_APPS in settings.py
+
+Make sure you've registered the model in admin.py
+
+Restart the server after making changes
+
+Image upload issues:
+
+Create a media folder in your project root (where manage.py is)
+
+Add this to settings.py:
+
+python
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+Add this to myecommerce/urls.py:
+
+python
+from django.conf import settings
+from django.conf.urls.static import static
+
+urlpatterns = [
+    # ... your other paths ...
+] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+Permission issues:
+
+Verify your user has superuser status:
+
+bash
+python manage.py shell
+python
+from django.contrib.auth import get_user_model
+User = get_user_model()
+user = User.objects.get(username='yourusername')
+print(user.is_superuser)  # Should be True
+print(user.is_staff)      # Should be True
+Example Product Creation:
+Here's what the admin form might look like with sample data:
+
+text
+Name: Wireless Headphones
+Price: 129.99
+Description: Premium noise-cancelling wireless headphones with 30-hour battery life
+Image: [Select headphone-image.jpg]
+Stock: 50
+After creating several products, your homepage should display them in a grid layout with images, names, prices, and "View Details" buttons.
+
+Next Steps:
+Add more products to test different categories
+
+Test the shopping cart functionality
+
+Try the checkout process with Stripe
+
+Customize the admin interface further using the ProductAdmin class
+
+Remember to always run migrations after making model changes:
+
+bash
+python manage.py makemigrations
+python manage.py migrate
+TemplateDoesNotExist at /cart/view/
+cart/detail.html
+Request Method:	GET
+Request URL:	http://localhost:8000/cart/view/
+Django Version:	5.2.4
+Exception Type:	TemplateDoesNotExist
+Exception Value:	
+cart/detail.html
+Exception Location:	C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\loader.py, line 19, in get_template
+Raised during:	cart.views.cart_detail
+Python Executable:	C:\Users\pc\AppData\Local\Programs\Python\Python313\python.exe
+Python Version:	3.13.5
+Python Path:	
+['C:\\Users\\pc\\python\\myecommerce',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313\\python313.zip',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313\\DLLs',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313\\Lib',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages']
+Server time:	Sat, 02 Aug 2025 21:21:36 +0000
+when trying to add to cart then this error is happen!
+This error occurs because Django can't find the cart/detail.html template. Let's fix this by creating the missing template file and ensuring the correct directory structure.
+
+Solution:
+Create the missing template directory and file:
+
+In your cart app directory, create a new folder called templates
+
+Inside templates, create another folder called cart
+
+Inside that, create a file called detail.html
+
+Your directory structure should look like this:
+
+text
+cart/
+├── templates/
+│   └── cart/
+│       └── detail.html   <-- Create this file
+├── __init__.py
+├── utils.py
+├── views.py
+└── urls.py
+Add content to cart/templates/cart/detail.html:
+Copy this code into the new file:
+
+html
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mt-5">
+    <h2>Your Cart</h2>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Product</th>
+                <th>Quantity</th>
+                <th>Price</th>
+                <th>Total</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in cart %}
+            <tr>
+                <td>{{ item.product.name }}</td>
+                <td>{{ item.quantity }}</td>
+                <td>${{ item.price }}</td>
+                <td>${{ item.total_price }}</td>
+                <td>
+                    <a href="{% url 'cart:remove_from_cart' item.product.id %}" 
+                       class="btn btn-danger btn-sm">Remove</a>
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="5">Your cart is empty</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr>
+                <td colspan="3"><strong>Total</strong></td>
+                <td colspan="2"><strong>${{ cart.get_total_price }}</strong></td>
+            </tr>
+        </tfoot>
+    </table>
+    <div class="text-right">
+        <a href="{% url 'products:product_list' %}" class="btn btn-secondary">Continue Shopping</a>
+        <a href="{% url 'checkout:checkout' %}" class="btn btn-primary">Checkout</a>
+    </div>
+</div>
+{% endblock %}
+Ensure your app is in INSTALLED_APPS:
+In myecommerce/settings.py, verify that cart is included:
+
+python
+INSTALLED_APPS = [
+    # ...
+    'cart',
+    # ...
+]
+Restart the development server:
+Stop the server with CTRL+C and restart it:
+
+bash
+python manage.py runserver
+Additional Checks:
+Verify template settings in settings.py:
+
+python
+TEMPLATES = [
+    {
+        'BACKEND': 'django.template.backends.django.DjangoTemplates',
+        'DIRS': [os.path.join(BASE_DIR, 'templates')],
+        'APP_DIRS': True,  # This must be True to find app templates
+        # ...
+    },
+]
+Confirm the view function in cart/views.py:
+
+python
+def cart_detail(request):
+    cart = Cart(request)
+    return render(request, 'cart/detail.html', {'cart': cart})
+Check the URL configuration in cart/urls.py:
+
+python
+from django.urls import path
+from . import views
+
+app_name = 'cart'
+
+urlpatterns = [
+    path('view/', views.cart_detail, name='cart_detail'),
+    # ... other paths ...
+]
+If the Problem Persists:
+Collect static files (may be needed for CSS):
+
+bash
+python manage.py collectstatic
+Check template loader order:
+Add this to settings.py to debug template loading:
+
+python
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'loggers': {
+        'django.template': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+        },
+    },
+}
+This will show where Django is looking for templates.
+
+Create a base template if missing:
+Ensure you have a templates/base.html file as we defined earlier.
+
+After implementing these changes, your cart page should load correctly when you visit http://localhost:8000/cart/view/ or click the cart link in your navigation.
+
+TemplateDoesNotExist at /checkout/success/
+checkout/success.html
+Request Method:	GET
+Request URL:	http://localhost:8000/checkout/success/
+Django Version:	5.2.4
+Exception Type:	TemplateDoesNotExist
+Exception Value:	
+checkout/success.html
+Exception Location:	C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\template\loader.py, line 19, in get_template
+Raised during:	checkout.views.payment_success
+Python Executable:	C:\Users\pc\AppData\Local\Programs\Python\Python313\python.exe
+Python Version:	3.13.5
+Python Path:	
+['C:\\Users\\pc\\python\\myecommerce',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313\\python313.zip',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313\\DLLs',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313\\Lib',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages']
+Server time:	Sat, 02 Aug 2025 21:25:06 +0000
+This error indicates that the checkout/success.html template is missing. Let's fix this by creating the required template files for the checkout app:
+
+Solution:
+Create the missing template directory and files:
+
+In your checkout app directory, create the following structure:
+
+text
+checkout/
+├── templates/
+│   └── checkout/
+│       ├── checkout.html
+│       ├── success.html   <-- Create this file
+│       └── cancel.html    <-- Good to create this too
+Add content to checkout/templates/checkout/success.html:
+
+html
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mt-5 text-center">
+    <h2 class="text-success">Payment Successful!</h2>
+    <p>Thank you for your purchase. Your order has been processed successfully.</p>
+    <a href="{% url 'products:product_list' %}" class="btn btn-primary">Continue Shopping</a>
+</div>
+{% endblock %}
+Create cancel.html for completeness:
+
+html
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mt-5 text-center">
+    <h2 class="text-danger">Payment Canceled</h2>
+    <p>Your payment was not completed.</p>
+    <a href="{% url 'checkout:checkout' %}" class="btn btn-primary">Try Again</a>
+</div>
+{% endblock %}
+Ensure your view functions are correctly pointing to these templates:
+In checkout/views.py, verify:
+
+python
+def payment_success(request):
+    cart = Cart(request)
+    cart.clear()
+    return render(request, 'checkout/success.html')
+
+def payment_cancel(request):
+    return render(request, 'checkout/cancel.html')
+Additional Checks:
+Confirm template settings in settings.py:
+
+python
+TEMPLATES = [
+    {
+        'BACKEND': 'django.template.backends.django.DjangoTemplates',
+        'DIRS': [os.path.join(BASE_DIR, 'templates')],
+        'APP_DIRS': True,  # Must be True to find app templates
+        # ...
+    },
+]
+Verify the checkout app is in INSTALLED_APPS:
+
+python
+INSTALLED_APPS = [
+    # ...
+    'checkout',
+    # ...
+]
+Check URL patterns in checkout/urls.py:
+
+python
+from django.urls import path
+from . import views
+
+app_name = 'checkout'
+
+urlpatterns = [
+    path('', views.CheckoutView.as_view(), name='checkout'),
+    path('success/', views.payment_success, name='success'),
+    path('cancel/', views.payment_cancel, name='cancel'),
+    # ...
+]
+If You Still Encounter Issues:
+Restart the development server after creating the templates.
+
+Check template loading order:
+Add this to settings.py to debug template loading:
+
+python
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'loggers': {
+        'django.template': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+        },
+    },
+}
+This will show where Django is looking for templates.
+
+Create a base template if missing:
+Ensure you have templates/base.html with this minimal content:
+
+html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>My Store</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    {% block content %}{% endblock %}
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
+After Fixing:
+Complete a test purchase
+
+You should be redirected to http://localhost:8000/checkout/success/
+
+The success page should display with your message
+
+Common Mistakes:
+Forgetting to create the inner checkout directory inside templates
+
+Misspelling the template name (e.g., "sucess.html" instead of "success.html")
+
+Not restarting the server after creating new templates
+
+Missing APP_DIRS = True in template settings
+
+This solution will ensure all checkout-related templates exist and are properly configured. The same pattern should be applied to any other missing templates in your project.
+
+Now how can i transacte my product in the admin panel? how many item is selling or not?
+To track product transactions and sales in your Django admin panel, you'll need to implement order tracking functionality. Here's a step-by-step solution:
+
+1. Create Order Models
+Add these to checkout/models.py:
+
+python
+from django.db import models
+from products.models import Product
+
+class Order(models.Model):
+    first_name = models.CharField(max_length=50)
+    last_name = models.CharField(max_length=50)
+    email = models.EmailField()
+    address = models.CharField(max_length=250)
+    postal_code = models.CharField(max_length=20)
+    city = models.CharField(max_length=100)
+    created = models.DateTimeField(auto_now_add=True)
+    updated = models.DateTimeField(auto_now=True)
+    paid = models.BooleanField(default=False)
+    stripe_id = models.CharField(max_length=250, blank=True)
+    
+    class Meta:
+        ordering = ['-created']
+        indexes = [
+            models.Index(fields=['-created']),
+        ]
+        
+    def __str__(self):
+        return f'Order {self.id}'
+    
+    def get_total_cost(self):
+        return sum(item.get_cost() for item in self.items.all())
+
+class OrderItem(models.Model):
+    order = models.ForeignKey(Order, related_name='items', on_delete=models.CASCADE)
+    product = models.ForeignKey(Product, related_name='order_items', on_delete=models.CASCADE)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    quantity = models.PositiveIntegerField(default=1)
+    
+    def __str__(self):
+        return str(self.id)
+    
+    def get_cost(self):
+        return self.price * self.quantity
+2. Update Checkout Process
+Modify checkout/views.py to create orders:
+
+python
+from .models import Order, OrderItem
+
+def payment_success(request):
+    cart = Cart(request)
+    
+    # Create order
+    order = Order.objects.create(
+        first_name="Customer First",  # Replace with actual data
+        last_name="Customer Last",    # Replace with actual data
+        email="customer@example.com", # Replace with actual data
+        address="123 Main St",
+        postal_code="12345",
+        city="City",
+        paid=True
+    )
+    
+    # Create order items
+    for item in cart:
+        OrderItem.objects.create(
+            order=order,
+            product=item['product'],
+            price=item['price'],
+            quantity=item['quantity']
+        )
+    
+    # Clear cart
+    cart.clear()
+    return render(request, 'checkout/success.html', {'order': order})
+3. Register Models in Admin
+Create checkout/admin.py:
+
+python
+from django.contrib import admin
+from .models import Order, OrderItem
+
+class OrderItemInline(admin.TabularInline):
+    model = OrderItem
+    raw_id_fields = ['product']
+
+@admin.register(Order)
+class OrderAdmin(admin.ModelAdmin):
+    list_display = ['id', 'first_name', 'last_name', 'email', 
+                    'address', 'postal_code', 'city', 'paid', 
+                    'created', 'updated']
+    list_filter = ['paid', 'created', 'updated']
+    inlines = [OrderItemInline]
+    
+    # Sales summary at top
+    change_list_template = 'admin/orders/order/change_list.html'
+    
+    def changelist_view(self, request, extra_context=None):
+        response = super().changelist_view(request, extra_context)
+        
+        # Calculate sales metrics
+        total_orders = Order.objects.count()
+        total_sales = sum(order.get_total_cost() for order in Order.objects.filter(paid=True))
+        popular_products = Product.objects.annotate(
+            total_sold=models.Sum('order_items__quantity')
+        ).order_by('-total_sold')[:5]
+        
+        # Add to context
+        response.context_data['total_orders'] = total_orders
+        response.context_data['total_sales'] = total_sales
+        response.context_data['popular_products'] = popular_products
+        
+        return response
+4. Create Admin Template
+Create templates/admin/orders/order/change_list.html:
+
+html
+{% extends "admin/change_list.html" %}
+
+{% block content_title %}
+<h1> Sales Summary </h1>
+{% endblock %}
+
+{% block result_list %}
+<div class="results">
+    <h2>Sales Overview</h2>
+    <div class="stats">
+        <p><strong>Total Orders:</strong> {{ total_orders }}</p>
+        <p><strong>Total Sales:</strong> ${{ total_sales|floatformat:2 }}</p>
+        
+        <h3>Top Selling Products</h3>
+        <ul>
+            {% for product in popular_products %}
+            <li>{{ product.name }} - Sold: {{ product.total_sold|default:0 }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+</div>
+
+{{ block.super }}
+{% endblock %}
+5. Update Models for Sales Tracking
+Add this to products/models.py:
+
+python
+class Product(models.Model):
+    # ... existing fields ...
+    
+    def total_sold(self):
+        return self.order_items.aggregate(
+            total_sold=models.Sum('quantity')
+        )['total_sold'] or 0
+6. Create Migration and Apply
+bash
+python manage.py makemigrations checkout
+python manage.py migrate
+How to Use in Admin Panel:
+After a successful payment, orders will appear in the admin panel
+
+Access orders at: http://localhost:8000/admin/checkout/order/
+
+You'll see:
+
+Sales summary at the top
+
+Total number of orders
+
+Total sales amount
+
+Top selling products
+
+Detailed order list
+
+Features Implemented:
+Order tracking with customer details
+
+Order items with quantities and prices
+
+Sales metrics dashboard
+
+Top selling products list
+
+Payment status tracking
+
+Total revenue calculation
+
+To Capture Real Customer Data:
+Create a form to collect shipping information during checkout
+
+Update the payment success view to use form data
+
+Pass customer data from the frontend to the payment success view
+
+Additional Improvements:
+Add order status tracking (Processing, Shipped, Delivered)
+
+Implement sales reports by date range
+
+Add product stock management (reduce stock on purchase)
+
+Integrate with shipping APIs
+
+Add customer accounts to track order history
+
+This implementation gives you a comprehensive order management system directly in the Django admin panel, allowing you to track sales, popular products, and customer orders.
+
+$ python manage.py makemigrations checkout
+C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\models\base.py:368: RuntimeWarning: Model 'products.product' was already registered. Reloading models is not advised as it can lead to inconsistencies, most 
+notably with related models.
+  new_class._meta.apps.register_model(new_class._meta.app_label, new_class)    
+SystemCheckError: System check identified some issues:
+
+ERRORS:
+<class 'products.admin.ProductAdmin'>: (admin.E108) The value of 'list_display[0]' refers to 'name', which is not a callable or attribute of 'ProductAdmin', or an attribute, method, or field on 'products.Product'.
+<class 'products.admin.ProductAdmin'>: (admin.E108) The value of 'list_display[1]' refers to 'price', which is not a callable or attribute of 'ProductAdmin', 
+or an attribute, method, or field on 'products.Product'.
+<class 'products.admin.ProductAdmin'>: (admin.E108) The value of 'list_display[2]' refers to 'stock', which is not a callable or attribute of 'ProductAdmin', 
+or an attribute, method, or field on 'products.Product'.
+The errors indicate issues with your ProductAdmin configuration in products/admin.py. Let's fix this step by step:
+
+Solution:
+Update products/admin.py:
+Replace your current ProductAdmin with this corrected version:
+
+python
+from django.contrib import admin
+from .models import Product
+
+@admin.register(Product)
+class ProductAdmin(admin.ModelAdmin):
+    list_display = ('name', 'price', 'stock')
+    search_fields = ('name', 'description')
+Fix the double registration issue:
+Make sure you're not registering the Product model twice. Your admin.py should look exactly like above.
+
+Run migrations:
+
+bash
+python manage.py makemigrations checkout
+python manage.py migrate
+If the Issue Persists:
+Unregister any duplicate registrations:
+If you have multiple registrations, use this approach instead:
+
+python
+from django.contrib import admin
+from .models import Product
+
+class ProductAdmin(admin.ModelAdmin):
+    list_display = ('name', 'price', 'stock')
+    search_fields = ('name', 'description')
+
+# Unregister first if already registered
+if admin.site.is_registered(Product):
+    admin.site.unregister(Product)
+    
+admin.site.register(Product, ProductAdmin)
+To Track Sales in Admin:
+Now that we have orders, let's implement sales tracking:
+
+Update checkout/views.py to create orders on successful payment:
+
+python
+# Add these imports at the top
+from .models import Order, OrderItem
+from django.shortcuts import get_object_or_404
+
+def payment_success(request):
+    cart = Cart(request)
+    
+    # Create a new order
+    order = Order.objects.create(
+        first_name="Customer",  # Replace with actual customer data
+        last_name="Name",       # You'll collect this in checkout
+        email="customer@example.com",
+        address="123 Main St",
+        postal_code="12345",
+        city="Anytown",
+        paid=True
+    )
+    
+    # Add items to the order
+    for item in cart:
+        OrderItem.objects.create(
+            order=order,
+            product=item['product'],
+            price=item['price'],
+            quantity=item['quantity']
+        )
+    
+    # Clear the cart
+    cart.clear()
+    return render(request, 'checkout/success.html', {'order': order})
+Create sales reports in checkout/admin.py:
+
+python
+from django.contrib import admin
+from .models import Order, OrderItem
+from django.db.models import Sum, F
+
+class OrderItemInline(admin.TabularInline):
+    model = OrderItem
+    extra = 0
+    readonly_fields = ('product', 'price', 'quantity', 'get_cost')
+    
+    def get_cost(self, obj):
+        return obj.price * obj.quantity
+    get_cost.short_description = 'Cost'
+
+@admin.register(Order)
+class OrderAdmin(admin.ModelAdmin):
+    list_display = ('id', 'created', 'first_name', 'last_name', 'email', 'paid', 'get_total_cost')
+    list_filter = ('paid', 'created')
+    search_fields = ('first_name', 'last_name', 'email')
+    inlines = [OrderItemInline]
+    readonly_fields = ('get_total_cost',)
+    
+    def get_total_cost(self, obj):
+        return sum(item.get_cost() for item in obj.items.all())
+    get_total_cost.short_description = 'Total Cost'
+    
+    # Sales summary
+    change_list_template = 'admin/orders/order/change_list.html'
+    
+    def changelist_view(self, request, extra_context=None):
+        response = super().changelist_view(request, extra_context)
+        
+        # Calculate sales metrics
+        total_orders = Order.objects.count()
+        total_sales = Order.objects.aggregate(
+            total=Sum(F('items__price') * F('items__quantity'))
+        )['total'] or 0
+        
+        # Get top selling products
+        from products.models import Product
+        top_products = Product.objects.annotate(
+            total_sold=Sum('order_items__quantity')
+        ).order_by('-total_sold')[:5]
+        
+        if not response.context_data:
+            response.context_data = {}
+            
+        response.context_data['total_orders'] = total_orders
+        response.context_data['total_sales'] = total_sales
+        response.context_data['top_products'] = top_products
+        
+        return response
+Create the admin template:
+Create templates/admin/orders/order/change_list.html with:
+
+html
+{% extends "admin/change_list.html" %}
+
+{% block content_title %}
+<h1> Sales Summary </h1>
+{% endblock %}
+
+{% block result_list %}
+<div class="results">
+    <div class="totals">
+        <h2>Sales Overview</h2>
+        <p><strong>Total Orders:</strong> {{ total_orders }}</p>
+        <p><strong>Total Revenue:</strong> ${{ total_sales|floatformat:2 }}</p>
+        
+        <h3>Top Selling Products</h3>
+        <ol>
+            {% for product in top_products %}
+            <li>{{ product.name }} - Sold: {{ product.total_sold|default:0 }}</li>
+            {% endfor %}
+        </ol>
+    </div>
+</div>
+
+{{ block.super }}
+{% endblock %}
+Update Product model in products/models.py:
+
+python
+class Product(models.Model):
+    # ... existing fields ...
+    
+    def total_sold(self):
+        return self.order_items.aggregate(
+            total_sold=Sum('quantity')
+        )['total_sold'] or 0
+Run migrations:
+
+bash
+python manage.py makemigrations
+python manage.py migrate
+How to View Sales Data:
+Go to the admin panel: http://localhost:8000/admin/
+
+Navigate to "Orders" under the "CHECKOUT" section
+
+You'll see:
+
+Sales summary at the top
+
+List of all orders
+
+Ability to drill down into order details
+
+Top selling products
+
+Key Features:
+Order tracking with customer details
+
+Order item details with quantities and prices
+
+Sales metrics (total orders, total revenue)
+
+Top selling products list
+
+Revenue calculation per order
+
+Stock tracking (through the Product model)
+
+To Capture Real Customer Data:
+Create a checkout form to collect:
+
+First name
+
+Last name
+
+Email
+
+Shipping address
+
+Pass this data to the Order creation in payment_success view
+
+This implementation gives you comprehensive sales tracking directly in the Django admin panel, allowing you to monitor your e-commerce store's performance.
+
+from django.contrib import admin
+from .models import Order, OrderItem
+from django.db.models import Sum, F
+
+class OrderItemInline(admin.TabularInline):
+    model = OrderItem
+    extra = 0
+    readonly_fields = ('product', 'price', 'quantity', 'get_cost')
+    
+    def get_cost(self, obj):
+        return obj.price * obj.quantity
+    get_cost.short_description = 'Cost'
+
+@admin.register(Order)
+class OrderAdmin(admin.ModelAdmin):
+    list_display = ('id', 'created', 'first_name', 'last_name', 'email', 'paid', 'get_total_cost')
+    list_filter = ('paid', 'created')
+    search_fields = ('first_name', 'last_name', 'email')
+    inlines = [OrderItemInline]
+    readonly_fields = ('get_total_cost',)
+    
+    def get_total_cost(self, obj):
+        return sum(item.get_cost() for item in obj.items.all())
+    get_total_cost.short_description = 'Total Cost'
+    
+    # Sales summary
+    change_list_template = 'admin/orders/order/change_list.html'
+    
+    def changelist_view(self, request, extra_context=None):
+        response = super().changelist_view(request, extra_context)
+        
+        # Calculate sales metrics
+        total_orders = Order.objects.count()
+        total_sales = Order.objects.aggregate(
+            total=Sum(F('items__price') * F('items__quantity'))
+        )['total'] or 0
+        
+        # Get top selling products
+        from products.models import Product
+        top_products = Product.objects.annotate(
+            total_sold=Sum('order_items__quantity')
+        ).order_by('-total_sold')[:5]
+        
+        if not response.context_data:
+            response.context_data = {}
+            
+        response.context_data['total_orders'] = total_orders
+        response.context_data['total_sales'] = total_sales
+        response.context_data['top_products'] = top_products
+        
+        return response
+$ python manage.py makemigrations
+C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\models\base.py:368: RuntimeWarning: Model 'products.product' was already registered. Reloading models is not advised as it can lead to inconsistencies, most 
+notably with related models.
+  new_class._meta.apps.register_model(new_class._meta.app_label, new_class)    
+SystemCheckError: System check identified some issues:
+
+ERRORS:
+<class 'products.admin.ProductAdmin'>: (admin.E108) The value of 'list_display[0]' refers to 'name', which is not a callable or attribute of 'ProductAdmin', or an attribute, method, or field on 'products.Product'.
+<class 'products.admin.ProductAdmin'>: (admin.E108) The value of 'list_display[1]' refers to 'price', which is not a callable or attribute of 'ProductAdmin', 
+or an attribute, method, or field on 'products.Product'.
+<class 'products.admin.ProductAdmin'>: (admin.E108) The value of 'list_display[2]' refers to 'stock', which is not a callable or attribute of 'ProductAdmin', 
+or an attribute, method, or field on 'products.Product'.
+(venv)
+The error indicates there's an issue with your ProductAdmin class in products/admin.py. Let's fix this step by step:
+
+Solution:
+Update products/admin.py to fix the ProductAdmin registration:
+
+python
+from django.contrib import admin
+from .models import Product
+
+# Use this approach instead of @admin.register
+class ProductAdmin(admin.ModelAdmin):
+    list_display = ('name', 'price', 'stock')
+    search_fields = ('name', 'description')
+
+# Unregister first if already registered
+if admin.site.is_registered(Product):
+    admin.site.unregister(Product)
+    
+admin.site.register(Product, ProductAdmin)
+Ensure your checkout/admin.py doesn't have any issues:
+
+python
+from django.contrib import admin
+from .models import Order, OrderItem
+from django.db.models import Sum, F
+
+class OrderItemInline(admin.TabularInline):
+    model = OrderItem
+    extra = 0
+    readonly_fields = ('product', 'price', 'quantity', 'get_cost')
+    
+    def get_cost(self, obj):
+        return obj.price * obj.quantity
+    get_cost.short_description = 'Cost'
+
+# Use this registration approach for OrderAdmin too
+class OrderAdmin(admin.ModelAdmin):
+    list_display = ('id', 'created', 'first_name', 'last_name', 'email', 'paid', 'get_total_cost')
+    list_filter = ('paid', 'created')
+    search_fields = ('first_name', 'last_name', 'email')
+    inlines = [OrderItemInline]
+    readonly_fields = ('get_total_cost',)
+    
+    def get_total_cost(self, obj):
+        return sum(item.get_cost() for item in obj.items.all())
+    get_total_cost.short_description = 'Total Cost'
+    
+    change_list_template = 'admin/orders/order/change_list.html'
+    
+    def changelist_view(self, request, extra_context=None):
+        response = super().changelist_view(request, extra_context)
+        
+        # Calculate sales metrics
+        total_orders = Order.objects.count()
+        total_sales = Order.objects.aggregate(
+            total=Sum(F('items__price') * F('items__quantity'))
+        )['total'] or 0
+        
+        # Get top selling products
+        from products.models import Product
+        top_products = Product.objects.annotate(
+            total_sold=Sum('order_items__quantity')
+        ).order_by('-total_sold')[:5]
+        
+        if not response.context_data:
+            response.context_data = {}
+            
+        response.context_data['total_orders'] = total_orders
+        response.context_data['total_sales'] = total_sales
+        response.context_data['top_products'] = top_products
+        
+        return response
+
+# Register Order model
+admin.site.register(Order, OrderAdmin)
+Additional Fixes Needed:
+Create the required template:
+Create templates/admin/orders/order/change_list.html with:
+
+html
+{% extends "admin/change_list.html" %}
+
+{% block content_title %}
+<h1> Sales Summary </h1>
+{% endblock %}
+
+{% block result_list %}
+<div class="results">
+    <div class="totals">
+        <h2>Sales Overview</h2>
+        <p><strong>Total Orders:</strong> {{ total_orders }}</p>
+        <p><strong>Total Revenue:</strong> ${{ total_sales|floatformat:2 }}</p>
+        
+        <h3>Top Selling Products</h3>
+        <ol>
+            {% for product in top_products %}
+            <li>{{ product.name }} - Sold: {{ product.total_sold|default:0 }}</li>
+            {% endfor %}
+        </ol>
+    </div>
+</div>
+
+{{ block.super }}
+{% endblock %}
+Update the Product model in products/models.py:
+
+python
+from django.db import models
+
+class Product(models.Model):
+    name = models.CharField(max_length=100)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    description = models.TextField()
+    image = models.ImageField(upload_to='products/')
+    stock = models.PositiveIntegerField(default=10)
+    
+    def __str__(self):
+        return self.name
+    
+    def total_sold(self):
+        return self.order_items.aggregate(
+            total_sold=models.Sum('quantity')
+        )['total_sold'] or 0
+Run These Commands:
+Make migrations:
+
+bash
+python manage.py makemigrations
+Apply migrations:
+
+bash
+python manage.py migrate
+If You Still Get Warnings:
+Add this to products/apps.py to prevent duplicate registration:
+
+python
+from django.apps import AppConfig
+
+class ProductsConfig(AppConfig):
+    default_auto_field = 'django.db.models.BigAutoField'
+    name = 'products'
+    
+    def ready(self):
+        # Import admin and models here to avoid circular imports
+        from django.contrib import admin
+        from .models import Product
+        from .admin import ProductAdmin
+        
+        # Unregister and re-register to prevent duplicate
+        if admin.site.is_registered(Product):
+            admin.site.unregister(Product)
+        admin.site.register(Product, ProductAdmin)
+Final Checks:
+Verify all files are saved
+
+Restart the development server
+
+Check the admin panel: http://localhost:8000/admin/
+
+You should see Products and Orders sections
+
+The Orders section should show the sales summary
+
+This solution should fix the double registration issue and properly configure your admin panels for both products and orders. The sales tracking functionality will now work correctly.
+
+$ python manage.py makemigrations
+C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\models\base.py:368: RuntimeWarning: Model 'products.product' was already registered. Reloading models is not advised as it can lead to inconsistencies, most 
+notably with related models.
+  new_class._meta.apps.register_model(new_class._meta.app_label, new_class)    
+SystemCheckError: System check identified some issues:
+
+ERRORS:
+<class 'products.admin.ProductAdmin'>: (admin.E108) The value of 'list_display[0]' refers to 'name', which is not a callable or attribute of 'ProductAdmin', or an attribute, method, or field on 'products.Product'.
+<class 'products.admin.ProductAdmin'>: (admin.E108) The value of 'list_display[1]' refers to 'price', which is not a callable or attribute of 'ProductAdmin', 
+or an attribute, method, or field on 'products.Product'.
+<class 'products.admin.ProductAdmin'>: (admin.E108) The value of 'list_display[2]' refers to 'stock', which is not a callable or attribute of 'ProductAdmin', 
+or an attribute, method, or field on 'products.Product'.
+The errors indicate two main issues:
+
+The Product model is being registered multiple times
+
+The ProductAdmin configuration is invalid
+
+Let's fix this with a comprehensive solution:
+
+Step 1: Fix the Product Admin Registration
+Update products/admin.py to:
+
+python
+from django.contrib import admin
+from .models import Product
+
+# First unregister if already registered
+if admin.site.is_registered(Product):
+    admin.site.unregister(Product)
+
+@admin.register(Product)
+class ProductAdmin(admin.ModelAdmin):
+    list_display = ('name', 'price', 'stock', 'total_sold')
+    search_fields = ('name', 'description')
+    
+    def total_sold(self, obj):
+        return obj.total_sold()
+    total_sold.short_description = 'Units Sold'
+Step 2: Fix the Product Model
+Update products/models.py to include the total_sold method:
+
+python
+from django.db import models
+from django.db.models import Sum
+
+class Product(models.Model):
+    name = models.CharField(max_length=100)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    description = models.TextField()
+    image = models.ImageField(upload_to='products/')
+    stock = models.PositiveIntegerField(default=10)
+    
+    def __str__(self):
+        return self.name
+    
+    def total_sold(self):
+        # Calculate total sold using aggregation
+        return self.order_items.aggregate(
+            total_sold=Sum('quantity')
+        )['total_sold'] or 0
+Step 3: Fix the Order Creation
+Update checkout/views.py to properly create orders:
+
+python
+def payment_success(request):
+    cart = Cart(request)
+    
+    # In a real application, you would collect customer info from a form
+    # For now, we'll use placeholder data
+    order = Order.objects.create(
+        first_name="Customer",
+        last_name="Name",
+        email="customer@example.com",
+        address="123 Main St",
+        postal_code="12345",
+        city="Anytown",
+        paid=True
+    )
+    
+    for item in cart:
+        OrderItem.objects.create(
+            order=order,
+            product=item['product'],
+            price=item['price'],
+            quantity=item['quantity']
+        )
+    
+    cart.clear()
+    return render(request, 'checkout/success.html', {'order': order})
+Step 4: Fix the Checkout Admin
+Update checkout/admin.py to:
+
+python
+from django.contrib import admin
+from .models import Order, OrderItem
+from django.db.models import Sum, F
+
+class OrderItemInline(admin.TabularInline):
+    model = OrderItem
+    extra = 0
+    readonly_fields = ('product', 'price', 'quantity', 'get_cost')
+    
+    def get_cost(self, obj):
+        return obj.price * obj.quantity
+    get_cost.short_description = 'Cost'
+
+# Unregister first if already registered
+if admin.site.is_registered(Order):
+    admin.site.unregister(Order)
+
+@admin.register(Order)
+class OrderAdmin(admin.ModelAdmin):
+    list_display = ('id', 'created', 'first_name', 'last_name', 'email', 'paid', 'get_total_cost')
+    list_filter = ('paid', 'created')
+    search_fields = ('first_name', 'last_name', 'email')
+    inlines = [OrderItemInline]
+    readonly_fields = ('get_total_cost',)
+    
+    def get_total_cost(self, obj):
+        return sum(item.get_cost() for item in obj.items.all())
+    get_total_cost.short_description = 'Total Cost'
+    
+    change_list_template = 'admin/orders/order/change_list.html'
+    
+    def changelist_view(self, request, extra_context=None):
+        response = super().changelist_view(request, extra_context)
+        
+        # Calculate sales metrics
+        total_orders = Order.objects.count()
+        total_sales = Order.objects.aggregate(
+            total=Sum(F('items__price') * F('items__quantity'))
+        )['total'] or 0
+        
+        # Get top selling products
+        from products.models import Product
+        top_products = Product.objects.annotate(
+            total_sold=Sum('order_items__quantity')
+        ).order_by('-total_sold')[:5]
+        
+        if response.context_data is None:
+            response.context_data = {}
+            
+        response.context_data['total_orders'] = total_orders
+        response.context_data['total_sales'] = total_sales
+        response.context_data['top_products'] = top_products
+        
+        return response
+Step 5: Create the Required Template
+Create templates/admin/orders/order/change_list.html with:
+
+html
+{% extends "admin/change_list.html" %}
+
+{% block content_title %}
+<h1> Sales Summary </h1>
+{% endblock %}
+
+{% block result_list %}
+<div class="results">
+    <div class="totals">
+        <h2>Sales Overview</h2>
+        <p><strong>Total Orders:</strong> {{ total_orders }}</p>
+        <p><strong>Total Revenue:</strong> ${{ total_sales|floatformat:2 }}</p>
+        
+        <h3>Top Selling Products</h3>
+        <ol>
+            {% for product in top_products %}
+            <li>{{ product.name }} - Sold: {{ product.total_sold|default:0 }}</li>
+            {% endfor %}
+        </ol>
+    </div>
+</div>
+
+{{ block.super }}
+{% endblock %}
+Step 6: Run Migrations
+bash
+python manage.py makemigrations
+python manage.py migrate
+Step 7: Test the Solution
+Add products through the admin panel
+
+Make test purchases
+
+Check the admin panel at http://localhost:8000/admin/checkout/order/ to see:
+
+Total orders count
+
+Total revenue
+
+Top selling products
+
+Individual order details
+
+Key Changes Made:
+Fixed duplicate model registration by adding unregister calls
+
+Added proper total_sold method to Product model
+
+Fixed OrderAdmin to properly calculate sales metrics
+
+Added a more robust template for sales reporting
+
+Fixed the payment_success view to properly create orders
+
+This solution should resolve all the errors and give you a functional sales tracking system in your Django admin panel. The products will now show units sold, and you'll have a comprehensive sales dashboard.
+
+<class 'products.admin.ProductAdmin'>: (admin.E108) The value of 'list_display[0]' refers to 'name', which is not a callable or attribute of 'ProductAdmin', or an attribute, method, or field on 'products.Product'.
+<class 'products.admin.ProductAdmin'>: (admin.E108) The value of 'list_display[1]' refers to 'price', which is not a callable or attribute of 'ProductAdmin', 
+or an attribute, method, or field on 'products.Product'.
+<class 'products.admin.ProductAdmin'>: (admin.E108) The value of 'list_display[2]' refers to 'stock', which is not a callable or attribute of 'ProductAdmin', 
+or an attribute, method, or field on 'products.Product'.
+this specific status error show in terminal also!!!
+This error is occurring because Django is having trouble accessing the model fields (name, price, stock) from your ProductAdmin class. Let's fix this with a comprehensive solution:
+
+Step-by-Step Fix:
+Update products/admin.py:
+
+python
+from django.contrib import admin
+from .models import Product
+
+# First unregister if already registered
+if admin.site.is_registered(Product):
+    admin.site.unregister(Product)
+
+class ProductAdmin(admin.ModelAdmin):
+    list_display = ['get_name', 'get_price', 'get_stock', 'total_sold']
+    search_fields = ('name', 'description')
+    
+    def get_name(self, obj):
+        return obj.name
+    get_name.short_description = 'Name'
+    
+    def get_price(self, obj):
+        return obj.price
+    get_price.short_description = 'Price'
+    
+    def get_stock(self, obj):
+        return obj.stock
+    get_stock.short_description = 'Stock'
+    
+    def total_sold(self, obj):
+        return obj.total_sold()
+    total_sold.short_description = 'Units Sold'
+
+admin.site.register(Product, ProductAdmin)
+Update products/models.py:
+
+python
+from django.db import models
+from django.db.models import Sum
+
+class Product(models.Model):
+    name = models.CharField(max_length=100)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    description = models.TextField()
+    image = models.ImageField(upload_to='products/')
+    stock = models.PositiveIntegerField(default=10)
+    
+    def __str__(self):
+        return self.name
+    
+    def total_sold(self):
+        # Safely calculate total sold using aggregation
+        result = self.order_items.aggregate(total_sold=Sum('quantity'))
+        return result['total_sold'] or 0
+Add __init__.py to templates directories:
+
+Create empty __init__.py files in these directories:
+
+products/templates/__init__.py
+
+products/templates/products/__init__.py
+
+cart/templates/__init__.py
+
+cart/templates/cart/__init__.py
+
+checkout/templates/__init__.py
+
+checkout/templates/checkout/__init__.py
+
+Clear migration history (if needed):
+
+bash
+python manage.py migrate --fake products zero
+python manage.py migrate --fake checkout zero
+python manage.py makemigrations
+python manage.py migrate
+Alternative Approach (Using Fields Directly):
+If the above doesn't work, try this simpler approach in products/admin.py:
+
+python
+from django.contrib import admin
+from .models import Product
+
+# First unregister if already registered
+if admin.site.is_registered(Product):
+    admin.site.unregister(Product)
+
+@admin.register(Product)
+class ProductAdmin(admin.ModelAdmin):
+    list_display = ['name', 'price', 'stock', 'total_sold']
+    search_fields = ('name', 'description')
+    
+    def total_sold(self, obj):
+        return obj.total_sold()
+    total_sold.short_description = 'Units Sold'
+Final Checks:
+Verify model field names in products/models.py:
+
+Ensure fields are named exactly name, price, stock
+
+Check for typos in the admin class
+
+Restart the development server after making changes
+
+Try a fresh database (for development only):
+
+bash
+rm db.sqlite3
+python manage.py makemigrations
+python manage.py migrate
+python manage.py createsuperuser
+Why This Happened:
+Model reloading: Django warns against reloading models as it can cause inconsistencies
+
+Admin registration conflicts: The model was being registered multiple times
+
+Field access issues: Django couldn't directly access model fields from the admin class
+
+After Fixing:
+The Product admin should show:
+
+Name
+
+Price
+
+Stock
+
+Units Sold
+
+You should be able to track sales through the Order admin
+
+The top selling products will appear in the sales summary
+
+If you still encounter issues, it might be worth creating a new Django app for products and moving your models there to avoid the model reloading conflicts.
+
+OperationalError at /admin/checkout/order/
+no such table: checkout_order
+Request Method:	GET
+Request URL:	http://localhost:8000/admin/checkout/order/
+Django Version:	5.2.4
+Exception Type:	OperationalError
+Exception Value:	
+no such table: checkout_order
+Exception Location:	C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\sqlite3\base.py, line 360, in execute
+Raised during:	checkout.admin.changelist_view
+Python Executable:	C:\Users\pc\AppData\Local\Programs\Python\Python313\python.exe
+Python Version:	3.13.5
+Python Path:	
+['C:\\Users\\pc\\python\\myecommerce',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313\\python313.zip',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313\\DLLs',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313\\Lib',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313',
+ 'C:\\Users\\pc\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages']
+Server time:	Sat, 02 Aug 2025 22:27:39 +0000
+This error occurs because the database table for the checkout_order model hasn't been created yet. Let's fix this step by step:
+
+Solution:
+Create migrations for the checkout app:
+
+bash
+python manage.py makemigrations checkout
+Apply all migrations:
+
+bash
+python manage.py migrate
+Verify the migration was applied:
+
+bash
+python manage.py showmigrations checkout
+You should see:
+
+text
+checkout
+ [X] 0001_initial
+If the Problem Persists:
+Delete existing migrations (only for development):
+
+bash
+# Delete migration files for checkout app
+del checkout\migrations\*.py
+
+# Keep the __init__.py file
+echo. > checkout\migrations\__init__.py
+Recreate migrations:
+
+bash
+python manage.py makemigrations checkout
+python manage.py migrate
+Additional Checks:
+Verify model definition in checkout/models.py:
+
+python
+from django.db import models
+from products.models import Product
+
+class Order(models.Model):
+    first_name = models.CharField(max_length=50)
+    last_name = models.CharField(max_length=50)
+    email = models.EmailField()
+    address = models.CharField(max_length=250)
+    postal_code = models.CharField(max_length=20)
+    city = models.CharField(max_length=100)
+    created = models.DateTimeField(auto_now_add=True)
+    updated = models.DateTimeField(auto_now=True)
+    paid = models.BooleanField(default=False)
+    stripe_id = models.CharField(max_length=250, blank=True)
+    
+    class Meta:
+        ordering = ['-created']
+        
+    def __str__(self):
+        return f'Order {self.id}'
+    
+    def get_total_cost(self):
+        return sum(item.get_cost() for item in self.items.all())
+
+class OrderItem(models.Model):
+    order = models.ForeignKey(Order, related_name='items', on_delete=models.CASCADE)
+    product = models.ForeignKey(Product, related_name='order_items', on_delete=models.CASCADE)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    quantity = models.PositiveIntegerField(default=1)
+    
+    def __str__(self):
+        return str(self.id)
+    
+    def get_cost(self):
+        return self.price * self.quantity
+Ensure the checkout app is in INSTALLED_APPS in settings.py:
+
+python
+INSTALLED_APPS = [
+    # ...
+    'checkout',
+    # ...
+]
+Check for database connection issues:
+
+bash
+python manage.py dbshell
+Then in SQLite shell:
+
+sql
+.tables
+.exit
+If You Still Encounter Issues:
+Reset the database (development only):
+
+bash
+python manage.py flush
+Then run:
+
+bash
+python manage.py makemigrations
+python manage.py migrate
+python manage.py createsuperuser
+Manually create the table (last resort):
+
+bash
+python manage.py migrate checkout --fake
+python manage.py migrate
+After Fixing:
+Access the admin panel: http://localhost:8000/admin/
+
+You should see "Orders" under the "CHECKOUT" section
+
+Add some orders through the admin or by making test purchases
+
+To Track Sales:
+Create test orders:
+
+Make purchases through your store
+
+Or create orders manually in the admin panel
+
+View sales data:
+
+Go to http://localhost:8000/admin/checkout/order/
+
+You'll see a sales summary at the top
+
+Total orders count
+
+Total revenue
+
+Top selling products
+
+Key Tables to Verify:
+checkout_order
+
+checkout_orderitem
+
+products_product
+
+django_migrations
+
+This solution should resolve the "no such table" error and give you access to your order tracking system in the Django admin panel.
+
+$ python manage.py migrate
+Operations to perform:
+  Apply all migrations: admin, auth, checkout, contenttypes, products, sessionsRunning migrations:
+  Applying products.0001_initial...Traceback (most recent call last):
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\utils.py", line 103, in _execute
+    return self.cursor.execute(sql)
+           ~~~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\sqlite3\base.py", line 356, in execute
+    return super().execute(query)
+           ~~~~~~~~~~~~~~~^^^^^^^
+sqlite3.OperationalError: table "products_product" already exists
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\pc\python\myecommerce\manage.py", line 20, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\pc\python\myecommerce\manage.py", line 17, in main
+    execute_from_command_line(sys.argv)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\management\__init__.py", line 442, in execute_from_command_line     
+    utility.execute()
+    ~~~~~~~~~~~~~~~^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\management\__init__.py", line 436, in execute
+    self.fetch_command(subcommand).run_from_argv(self.argv)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\management\base.py", line 416, in run_from_argv
+    self.execute(*args, **cmd_options)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\management\base.py", line 460, in execute
+    output = self.handle(*args, **options)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\management\base.py", line 107, in wrapper
+    res = handle_func(*args, **kwargs)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\core\management\commands\migrate.py", line 353, in handle
+    post_migrate_state = executor.migrate(
+        targets,
+    ...<3 lines>...
+        fake_initial=fake_initial,
+    )
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\migrations\executor.py", line 135, in migrate
+    state = self._migrate_all_forwards(
+        state, plan, full_plan, fake=fake, fake_initial=fake_initial
+    )
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\migrations\executor.py", line 167, in _migrate_all_forwards
+    state = self.apply_migration(
+        state, migration, fake=fake, fake_initial=fake_initial
+    )
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\migrations\executor.py", line 255, in apply_migration
+    state = migration.apply(state, schema_editor)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\migrations\migration.py", line 132, in apply
+    operation.database_forwards(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self.app_label, schema_editor, old_state, project_state
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\migrations\operations\models.py", line 97, in database_forwards       
+    schema_editor.create_model(model)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\base\schema.py", line 512, in create_model
+    self.execute(sql, params or None)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\base\schema.py", line 204, in execute
+    cursor.execute(sql, params)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\utils.py", line 122, in execute
+    return super().execute(sql, params)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\utils.py", line 79, in execute
+    return self._execute_with_wrappers(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        sql, params, many=False, executor=self._execute
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\utils.py", line 92, in _execute_with_wrappers
+    return executor(sql, params, many, context)
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\utils.py", line 100, in _execute
+    with self.db.wrap_database_errors:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\utils.py", line 91, in __exit__
+    raise dj_exc_value.with_traceback(traceback) from exc_value
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\utils.py", line 103, in _execute
+    return self.cursor.execute(sql)
+           ~~~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\pc\AppData\Local\Programs\Python\Python313\Lib\site-packages\django\db\backends\sqlite3\base.py", line 356, in execute
+    return super().execute(query)
+           ~~~~~~~~~~~~~~~^^^^^^^
+django.db.utils.OperationalError: table "products_product" already exists
+This error occurs because you're trying to create the products_product table again, but it already exists in your database. Let's resolve this with a safe approach that preserves your data:
+
+Solution:
+Fake the initial migration for products:
+
+bash
+python manage.py migrate --fake products 0001
+Create new migrations for checkout:
+
+bash
+python manage.py makemigrations checkout
+Apply all migrations:
+
+bash
+python manage.py migrate
+Alternative Approach (Reset Migrations):
+If the above doesn't work, reset your migrations completely:
+
+Delete migration files:
+
+bash
+# Products app
+del products\migrations\*.py
+echo. > products\migrations\__init__.py
+
+# Checkout app
+del checkout\migrations\*.py
+echo. > checkout\migrations\__init__.py
+Recreate migrations:
+
+bash
+python manage.py makemigrations
+Fake the initial migration (since tables already exist):
+
+bash
+python manage.py migrate --fake-initial
+If You Still Encounter Issues:
+Reset the database (development only):
+
+bash
+python manage.py flush
+python manage.py makemigrations
+python manage.py migrate
+Manually inspect the database using SQLite browser or CLI:
+
+bash
+python manage.py dbshell
+Then run:
+
+sql
+.tables
+.exit
+After Fixing:
+Create a superuser:
+
+bash
+python manage.py createsuperuser
+Start the server:
+
+bash
+python manage.py runserver
+Key Files to Verify:
+products/migrations/0001_initial.py - Should contain your Product model migration
+
+checkout/migrations/0001_initial.py - Should contain Order and OrderItem models
+
+db.sqlite3 - Should exist in your project root
+
+To Prevent Future Issues:
+Don't delete migration files after running migrate
+
+Use consistent database environments (don't switch between SQLite/MySQL)
+
+Run migrations immediately after makemigrations
+
+Avoid manual database modifications
+
+Final Verification:
+Access the admin panel: http://localhost:8000/admin/
+
+You should see:
+
+Products section
+
+Orders section under Checkout
+
+Ability to add products and view orders
+
+This solution preserves your existing data while fixing the migration conflicts. The fake migration tells Django that the initial migration has already been applied, syncing your migration history with your database state.
+
+New chat
+Message DeepSeek
+
+
+AI-generated, for reference only
+
